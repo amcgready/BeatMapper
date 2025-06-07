@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "@ffmpeg/core": "^0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "file-saver": "^2.0.5",
+    "jszip": "^3.10.1",
+    "music-metadata": "^11.2.3",
+    "music-metadata-browser": "^2.5.11",
+    "react-router-dom": "^7.6.2"
+  }
+}

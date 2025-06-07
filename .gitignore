@@ -1,0 +1,23 @@
+# Output and build
+output/
+frontend/dist/
+frontend/node_modules/
+backend/__pycache__/
+backend/.venv/
+backend/venv/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+
+# Environment files
+.env
