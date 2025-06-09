@@ -58,42 +58,38 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {
     setIsSaving(true);
     
     try {
-      console.log("Saving metadata:", metadata);
-      console.log("Album art present:", albumArt ? "Yes" : "No");
+      // Prepare payload as JSON
+      const payload = {
+        id: beatmap.id,
+        title: metadata.title || "",
+        artist: metadata.artist || "",
+        album: metadata.album || "",
+        year: metadata.year || ""
+      };
       
-      const formData = new FormData();
-      formData.append("id", beatmap.id);
-      formData.append("title", metadata.title);
-      formData.append("artist", metadata.artist);
-      formData.append("album", metadata.album);
-      formData.append("year", metadata.year);
+      console.log("Sending payload:", payload);
       
-      if (albumArt) {
-        formData.append("albumArt", albumArt);
-      }
-      
-      // Save metadata to server
+      // Send as JSON
       const response = await fetch("/api/update_metadata", {
         method: "POST",
-        body: formData,
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
       });
       
       if (!response.ok) {
-        const errorData = await response.text();
-        console.error("Server error on update_metadata:", errorData);
-        throw new Error(`Failed to update metadata: ${response.status}`);
+        const errorText = await response.text();
+        console.error("Server error response:", errorText);
+        throw new Error(`Server error: ${errorText}`);
       }
       
       const result = await response.json();
-      console.log("Server response:", result);
       
       if (result.status === "success") {
-        // Call the onSave callback with updated metadata
         const updatedBeatmap = {
           ...beatmap,
           ...metadata,
-          // If we have a new artwork preview from user upload, use it
-          // Otherwise keep the existing artwork
           artwork: albumArtPreview || beatmap.artwork
         };
         
@@ -104,7 +100,7 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {
       }
     } catch (error) {
       console.error("Error updating metadata:", error);
-      alert("Failed to update metadata: " + error.message);
+      alert(`Failed to update metadata: ${error.message}`);
     } finally {
       setIsSaving(false);
     }
@@ -378,28 +374,38 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
     setUploadingMetadata(true);
     
     try {
-      // Send updated metadata to backend
+      // Create a FormData object instead of sending JSON
+      const formData = new FormData();
+      formData.append("id", beatmap.id);
+      formData.append("title", editFields.title);
+      formData.append("artist", editFields.artist);
+      formData.append("album", editFields.album);
+      formData.append("year", editFields.year);
+      
+      // Send updated metadata to backend using FormData
       const response = await fetch("/api/update_metadata", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: beatmap.id,
-          ...editFields
-        }),
+        body: formData,
       });
 
       if (!response.ok) {
-        throw new Error("Failed to update metadata");
+        const errorData = await response.text();
+        console.error("Server error on update_metadata:", errorData);
+        throw new Error(`Failed to update metadata: ${response.status}`);
       }
 
-      // Update local state
-      setBeatmaps(prev => 
-        prev.map(b => b.id === beatmap.id ? { ...b, ...editFields } : b)
-      );
+      const result = await response.json();
       
-      setEditMode(false);
+      if (result.status === "success") {
+        // Update local state
+        setBeatmaps(prev => 
+          prev.map(b => b.id === beatmap.id ? { ...b, ...editFields } : b)
+        );
+        
+        setEditMode(false);
+      } else {
+        throw new Error(result.message || "Unknown error updating metadata");
+      }
     } catch (error) {
       console.error("Error updating metadata:", error);
       alert("Failed to update metadata. Please try again.");

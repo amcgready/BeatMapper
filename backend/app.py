@@ -3,17 +3,7 @@ import logging
 import json
 import uuid
 from datetime import datetime
-
-log_file = os.path.join(os.path.dirname(__file__), 'beatmapper.log')
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(name)s %(message)s',
-    handlers=[
-        logging.FileHandler(log_file, encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-
+import sqlite3
 from flask import Flask, request, send_file, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 from processing.audio_converter import mp3_to_ogg
@@ -26,6 +16,16 @@ import zipfile
 import io
 import csv
 import shutil
+
+log_file = os.path.join(os.path.dirname(__file__), 'beatmapper.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(name)s %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
 
 app = Flask(__name__)
 CORS(app)
@@ -47,6 +47,13 @@ def cleanup_output_dir(days=7):
                     app.logger.info(f"Deleted old file: {filename}")
                 except Exception as e:
                     app.logger.error(f"Failed to delete {filename}: {e}")
+
+def get_db_connection():
+    """Create a connection to the SQLite database."""
+    db_path = os.path.join(os.path.dirname(__file__), 'beatmapper.db')
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 @app.route('/api/health')
 def health():
@@ -430,55 +437,95 @@ def clear_beatmaps():
 
 @app.route('/api/update_metadata', methods=['POST'])
 def update_metadata():
-    """Update beatmap metadata"""
+    """Update beatmap metadata using the JSON file system"""
     try:
-        data = request.json
-        beatmap_id = data.get('id')
+        app.logger.info("Update metadata endpoint called")
         
-        # Read existing metadata
-        metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
-        beatmaps = []
-        
-        if os.path.exists(metadata_path):
-            with open(metadata_path, 'r') as f:
-                beatmaps = json.load(f)
-        
-        # Update the specified beatmap
-        updated = False
-        for beatmap in beatmaps:
-            if beatmap['id'] == beatmap_id:
-                beatmap['title'] = data.get('title', beatmap.get('title', ''))
-                beatmap['artist'] = data.get('artist', beatmap.get('artist', ''))
-                beatmap['album'] = data.get('album', beatmap.get('album', ''))
-                beatmap['year'] = data.get('year', beatmap.get('year', ''))
-                updated = True
-                break
-        
-        if not updated:
-            return jsonify({'error': 'Beatmap not found'}), 404
+        # Get data from JSON request
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "No JSON data received"}), 400
             
-        # Save updated metadata
-        with open(metadata_path, 'w') as f:
-            json.dump(beatmaps, f)
+        beatmap_id = data.get('id')
+        if not beatmap_id:
+            return jsonify({"status": "error", "message": "Missing beatmap ID"}), 400
+            
+        title = data.get('title', '')
+        artist = data.get('artist', '')
+        album = data.get('album', '')
+        year = data.get('year', '')
         
-        # Update the beatmap's info.csv file if it exists
-        beatmap_dir = os.path.join(OUTPUT_DIR, beatmap_id)
-        info_path = os.path.join(beatmap_dir, 'info.csv')
+        app.logger.info(f"Updating metadata for beatmap: {beatmap_id}")
+        app.logger.info(f"New metadata: title='{title}', artist='{artist}', album='{album}', year='{year}'")
         
-        if os.path.exists(info_path):
-            song_metadata = {
-                "title": data.get('title', ''),
-                "artist": data.get('artist', ''),
-                "album": data.get('album', ''),
-                "year": data.get('year', ''),
-                "genre": data.get('genre', 'Unknown')
-            }
-            generate_info_csv(song_metadata, info_path)
-        
-        return jsonify({'status': 'Metadata updated'})
+        # Update the metadata in the JSON file
+        try:
+            # Read existing beatmaps
+            metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
+            beatmaps = []
+            
+            if os.path.exists(metadata_path):
+                with open(metadata_path, 'r') as f:
+                    beatmaps = json.load(f)
+            
+            # Find and update the beatmap
+            found = False
+            for beatmap in beatmaps:
+                if beatmap.get('id') == beatmap_id:
+                    beatmap['title'] = title
+                    beatmap['artist'] = artist
+                    beatmap['album'] = album
+                    beatmap['year'] = year
+                    found = True
+                    break
+            
+            if not found:
+                app.logger.error(f"Beatmap {beatmap_id} not found")
+                return jsonify({
+                    "status": "error",
+                    "message": f"Beatmap with ID {beatmap_id} not found"
+                }), 404
+            
+            # Save updated metadata
+            with open(metadata_path, 'w') as f:
+                json.dump(beatmaps, f)
+            
+            app.logger.info(f"Metadata updated successfully for beatmap {beatmap_id}")
+            
+            # Update info.csv file in beatmap directory if it exists
+            beatmap_dir = os.path.join(OUTPUT_DIR, beatmap_id)
+            info_path = os.path.join(beatmap_dir, 'info.csv')
+            
+            if os.path.exists(beatmap_dir) and os.path.exists(info_path):
+                app.logger.info(f"Updating info.csv for beatmap {beatmap_id}")
+                # Update the info.csv file
+                song_metadata = {
+                    "title": title,
+                    "artist": artist,
+                    "album": album,
+                    "year": year
+                }
+                generate_info_csv(song_metadata, info_path)
+            
+            return jsonify({
+                "status": "success",
+                "message": "Metadata updated successfully"
+            })
+            
+        except Exception as file_error:
+            app.logger.error(f"File error: {str(file_error)}", exc_info=True)
+            return jsonify({
+                "status": "error",
+                "message": f"File error: {str(file_error)}"
+            }), 500
+            
     except Exception as e:
-        app.logger.error(f"Failed to update metadata: {e}")
-        return jsonify({'error': 'Failed to update metadata'}), 500
+        app.logger.error(f"Error in update_metadata: {str(e)}", exc_info=True)
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+    
 
 @app.route('/api/download_beatmap/<beatmap_id>', methods=['GET'])
 def download_beatmap(beatmap_id):
