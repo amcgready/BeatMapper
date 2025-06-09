@@ -301,9 +301,15 @@ def get_beatmaps():
 
 @app.route('/api/beatmap/<beatmap_id>', methods=['DELETE'])
 def delete_beatmap(beatmap_id):
-    """Delete a beatmap"""
+    """Delete a beatmap and its associated files"""
     try:
-        # Find and remove the beatmap from metadata
+        # Parse request data if available
+        request_data = request.get_json() if request.is_json else {}
+        delete_files = request_data.get('deleteFiles', True)  # Default to true
+        
+        app.logger.info(f"Deleting beatmap {beatmap_id}, delete_files={delete_files}")
+        
+        # Get metadata file path
         metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
         beatmaps = []
         
@@ -311,44 +317,116 @@ def delete_beatmap(beatmap_id):
             with open(metadata_path, 'r') as f:
                 beatmaps = json.load(f)
         
-        # Filter out the deleted beatmap
-        beatmaps = [b for b in beatmaps if b['id'] != beatmap_id]
+        # Find the beatmap to be deleted
+        beatmap_to_delete = None
+        updated_beatmaps = []
         
-        # Save updated metadata
+        for beatmap in beatmaps:
+            if beatmap.get('id') == beatmap_id:
+                beatmap_to_delete = beatmap
+            else:
+                updated_beatmaps.append(beatmap)
+        
+        if not beatmap_to_delete:
+            app.logger.warning(f"Beatmap {beatmap_id} not found for deletion")
+            return jsonify({'status': 'error', 'message': 'Beatmap not found'}), 404
+        
+        # Update the metadata file
         with open(metadata_path, 'w') as f:
-            json.dump(beatmaps, f)
+            json.dump(updated_beatmaps, f)
         
-        # Delete the associated files
-        beatmap_dir = os.path.join(OUTPUT_DIR, beatmap_id)
-        if os.path.exists(beatmap_dir):
-            shutil.rmtree(beatmap_dir)
-            app.logger.info(f"Deleted beatmap directory: {beatmap_id}")
+        # Delete associated files if requested
+        deleted_files = []
         
-        return jsonify({'status': 'Beatmap deleted'})
+        if delete_files:
+            # Delete beatmap directory if it exists
+            beatmap_dir = os.path.join(OUTPUT_DIR, beatmap_id)
+            if os.path.exists(beatmap_dir) and os.path.isdir(beatmap_dir):
+                shutil.rmtree(beatmap_dir)
+                deleted_files.append(f"Directory: {beatmap_id}")
+            
+            # Delete individual files
+            file_patterns = [
+                f"{beatmap_id}.mp3",
+                f"{beatmap_id}.ogg",
+                f"{beatmap_id}_artwork.jpg",
+                f"{beatmap_id}_beatmap.zip",
+                # Add any other file patterns associated with beatmaps
+            ]
+            
+            for pattern in file_patterns:
+                file_path = os.path.join(OUTPUT_DIR, pattern)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    deleted_files.append(f"File: {pattern}")
+        
+        app.logger.info(f"Deleted beatmap {beatmap_id} and {len(deleted_files)} associated files")
+        return jsonify({
+            'status': 'success', 
+            'message': 'Beatmap deleted',
+            'deleted_files': deleted_files
+        })
+    
     except Exception as e:
-        app.logger.error(f"Failed to delete beatmap: {e}")
-        return jsonify({'error': 'Failed to delete beatmap'}), 500
+        app.logger.error(f"Error deleting beatmap {beatmap_id}: {str(e)}")
+        return jsonify({
+            'status': 'error', 
+            'message': f'Failed to delete beatmap: {str(e)}'
+        }), 500
+
 
 @app.route('/api/clear_beatmaps', methods=['POST'])
 def clear_beatmaps():
-    """Clear all beatmaps"""
+    """Clear all beatmaps and associated files"""
     try:
-        # Clear the metadata
+        # Parse request data if available
+        request_data = request.get_json() if request.is_json else {}
+        delete_files = request_data.get('deleteFiles', True)  # Default to true
+        
+        app.logger.info(f"Clearing all beatmaps, delete_files={delete_files}")
+        
+        # Get metadata file path
         metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
+        
+        # Save empty beatmaps list
         with open(metadata_path, 'w') as f:
             json.dump([], f)
         
-        # Delete all beatmap directories except for the current working files
-        for item in os.listdir(OUTPUT_DIR):
-            item_path = os.path.join(OUTPUT_DIR, item)
-            if os.path.isdir(item_path):
-                shutil.rmtree(item_path)
-                app.logger.info(f"Deleted directory: {item}")
+        deleted_items = []
         
-        return jsonify({'status': 'All beatmaps cleared'})
+        # Delete files if requested
+        if delete_files:
+            # Create a list to store files/directories to preserve
+            preserve = ['beatmaps.json', '.gitkeep']
+            
+            for item in os.listdir(OUTPUT_DIR):
+                if item in preserve:
+                    continue
+                    
+                item_path = os.path.join(OUTPUT_DIR, item)
+                try:
+                    if os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+                        deleted_items.append(f"Directory: {item}")
+                    else:
+                        os.remove(item_path)
+                        deleted_items.append(f"File: {item}")
+                except Exception as e:
+                    app.logger.error(f"Error deleting {item_path}: {str(e)}")
+        
+        app.logger.info(f"Cleared all beatmaps and {len(deleted_items)} associated files")
+        return jsonify({
+            'status': 'success', 
+            'message': 'All beatmaps cleared',
+            'deleted_items': deleted_items
+        })
+    
     except Exception as e:
-        app.logger.error(f"Failed to clear beatmaps: {e}")
-        return jsonify({'error': 'Failed to clear beatmaps'}), 500
+        app.logger.error(f"Error clearing beatmaps: {str(e)}")
+        return jsonify({
+            'status': 'error', 
+            'message': f'Failed to clear beatmaps: {str(e)}'
+        }), 500
 
 @app.route('/api/update_metadata', methods=['POST'])
 def update_metadata():

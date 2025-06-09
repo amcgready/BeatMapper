@@ -686,21 +686,42 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
   };
 
   const handleClearBeatmaps = async () => {
-    if (!window.confirm("Are you sure you want to clear all beatmaps? This action cannot be undone.")) {
+    if (!window.confirm("Are you sure you want to clear all beatmaps? This will delete all files from the server. This action cannot be undone.")) {
       return;
     }
     
     try {
+      setLogs((prev) => [...prev, "Clearing all beatmaps and associated files..."]);
+      
       const response = await fetch("/api/clear_beatmaps", {
-        method: "POST"
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ deleteFiles: true })
       });
       
       if (!response.ok) {
-        throw new Error("Failed to clear beatmaps");
+        const errorText = await response.text();
+        throw new Error(`Server responded with status ${response.status}: ${errorText}`);
       }
       
+      const data = await response.json();
+      
+      // Log details of deleted files if available
+      if (data.deleted_items && data.deleted_items.length > 0) {
+        setLogs((prev) => [
+          ...prev, 
+          `Successfully cleared ${data.deleted_items.length} items from server:`,
+          ...data.deleted_items.slice(0, 10).map(item => `- ${item}`),
+          data.deleted_items.length > 10 ? `... and ${data.deleted_items.length - 10} more items` : ""
+        ].filter(Boolean));
+      } else {
+        setLogs((prev) => [...prev, "All beatmaps and files cleared from server"]);
+      }
+      
+      // Update local state
       setBeatmaps([]);
-      setLogs((prev) => [...prev, "All beatmaps cleared"]);
     } catch (error) {
       console.error("Error clearing beatmaps:", error);
       setLogs((prev) => [...prev, `Failed to clear beatmaps: ${error.message}`]);
@@ -896,14 +917,25 @@ export default function App() {
 
   const handleDeleteBeatmap = async (id) => {
     try {
-      // Send delete request to server
-      await fetch(`/api/beatmap/${id}`, {
-        method: "DELETE"
+      setLogs(prev => [...prev, `Deleting beatmap ID: ${id}...`]);
+      
+      // Send delete request to server with explicit instruction to delete files
+      const response = await fetch(`/api/beatmap/${id}`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ deleteFiles: true })
       });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Server responded with status ${response.status}: ${errorText}`);
+      }
       
       // Update local state
       setBeatmaps(prev => prev.filter(b => b.id !== id));
-      setLogs(prev => [...prev, `Deleted beatmap ID: ${id}`]);
+      setLogs(prev => [...prev, `Successfully deleted beatmap ID: ${id} and associated files`]);
     } catch (error) {
       console.error("Failed to delete beatmap:", error);
       setLogs(prev => [...prev, `Failed to delete beatmap: ${error.message}`]);
