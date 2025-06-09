@@ -1,1 +1,50 @@
 /* Example: You can add your custom styles here or leave it empty if using Tailwind */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* Modal fade-in animation */
+@keyframes modalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-overlay {
+  animation: modalFadeIn 0.3s ease-out;
+}
+
+/* Add this class to make sure the bm-card doesn't force center alignment in the modal */
+.bm-card.modal-card {
+  align-items: flex-start;
+  text-align: left;
+}
+
+/* Fix for any flex layout issues in the form */
+.metadata-form-row {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+/* Add this to the end of App.css */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin-animation {
+  animation: spin 1s linear infinite;
+}
+
+/* Override default card width for logs and beatmaps */
+.bm-card.logs-card,
+.bm-card.beatmaps-card {
+  max-width: 800px; /* Double the default 400px width */
+}

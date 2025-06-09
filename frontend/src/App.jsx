@@ -1,9 +1,337 @@
 import React, { useState, useRef, useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route, Link, useParams, Navigate, useNavigate } from "react-router-dom";
-import { FaUpload, FaMusic, FaTrash, FaPencilAlt, FaDownload, FaSave } from "react-icons/fa";
+import { FaUpload, FaMusic, FaTrash, FaPencilAlt, FaDownload, FaSave, FaTimes } from "react-icons/fa";
 import logo from "../logo.png";
 import { saveAs } from "file-saver";
 import "./App.css";
+
+// --- Improved Metadata Edit Modal Component ---
+function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {
+  const [metadata, setMetadata] = useState({
+    title: beatmap?.title || "",
+    artist: beatmap?.artist || "",
+    year: beatmap?.year || "",
+    album: beatmap?.album || "",
+  });
+  
+  const [albumArt, setAlbumArt] = useState(null);
+  const [albumArtPreview, setAlbumArtPreview] = useState(beatmap?.artwork || null);
+  const [isSaving, setIsSaving] = useState(false);
+  
+  // Reset form when beatmap changes
+  useEffect(() => {
+    if (beatmap) {
+      setMetadata({
+        title: beatmap.title || "",
+        artist: beatmap.artist || "",
+        year: beatmap.year || "",
+        album: beatmap.album || "",
+      });
+      setAlbumArtPreview(beatmap.artwork || null);
+    }
+  }, [beatmap]);
+  
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setMetadata({
+      ...metadata,
+      [name]: value,
+    });
+  };
+  
+  const handleAlbumArtChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setAlbumArtPreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+      setAlbumArt(file);
+    }
+  };
+  
+  const handleSave = async () => {
+    if (!beatmap) return;
+    
+    setIsSaving(true);
+    
+    try {
+      const formData = new FormData();
+      formData.append("id", beatmap.id);
+      formData.append("title", metadata.title);
+      formData.append("artist", metadata.artist);
+      formData.append("year", metadata.year);
+      formData.append("album", metadata.album);
+      
+      if (albumArt) {
+        formData.append("albumArt", albumArt);
+      }
+      
+      // Save metadata to server
+      const response = await fetch("/api/update_metadata", {
+        method: "POST",
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        throw new Error("Failed to update metadata");
+      }
+      
+      // Call the onSave callback with updated metadata
+      onSave({
+        ...beatmap,
+        ...metadata,
+        artwork: albumArtPreview,
+      });
+      
+      onClose();
+    } catch (error) {
+      console.error("Error updating metadata:", error);
+      alert("Failed to update metadata. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (!isOpen) return null;
+  
+  return (
+    // This is a fixed position overlay that covers the entire viewport
+    <div style={{
+      position: "fixed",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: "rgba(0, 0, 0, 0.7)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 1000
+    }}>
+      {/* This is the modal container with fixed dimensions */}
+      <div style={{
+        backgroundColor: "#23272b",
+        border: "1px solid #444",
+        borderRadius: "12px",
+        boxShadow: "0 2px 20px rgba(0, 0, 0, 0.6)",
+        padding: "32px",
+        width: "90%",
+        maxWidth: "700px",
+        maxHeight: "90vh",
+        overflow: "auto",
+        position: "relative"
+      }}>
+        <h2 className="text-xl font-bold text-center mb-6">Edit Song Metadata</h2>
+        
+        <button 
+          onClick={onClose} 
+          style={{
+            position: "absolute",
+            top: "20px",
+            right: "20px",
+            background: "none",
+            border: "none",
+            fontSize: "24px",
+            cursor: "pointer",
+            color: "#999",
+          }}
+        >
+          &#10005;
+        </button>
+        
+        <div style={{
+          display: "flex",
+          flexDirection: "row",
+          marginBottom: "24px",
+          alignItems: "center",
+        }}>
+          <div style={{
+            width: "150px",
+            height: "150px",
+            backgroundColor: "#1a1d20",
+            border: "1px solid #444",
+            marginRight: "24px",
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}>
+            {albumArtPreview ? (
+              <img 
+                src={albumArtPreview} 
+                alt="Album artwork" 
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                onError={() => setAlbumArtPreview(null)}
+              />
+            ) : (
+              <div style={{ color: "#777", textAlign: "center" }}>
+                No Album Art
+              </div>
+            )}
+          </div>
+          
+          <div>
+            <div className="mb-3">Choose Album Art</div>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleAlbumArtChange}
+              style={{ display: "none" }}
+              id="album-art-input"
+            />
+            <label 
+              htmlFor="album-art-input" 
+              style={{
+                backgroundColor: "#444",
+                border: "none",
+                borderRadius: "4px",
+                padding: "8px 16px",
+                cursor: "pointer",
+                display: "inline-block",
+                marginRight: "10px",
+              }}
+            >
+              Browse...
+            </label>
+            <span style={{ color: "#999" }}>
+              {albumArt ? albumArt.name : "No file selected"}
+            </span>
+          </div>
+        </div>
+        
+        <div style={{ marginBottom: "16px", textAlign: "left" }}>
+          <div style={{ marginBottom: "8px" }}>Song Title</div>
+          <input
+            type="text"
+            name="title"
+            value={metadata.title}
+            onChange={handleInputChange}
+            style={{
+              width: "100%",
+              backgroundColor: "#1a1d20",
+              border: "1px solid #444",
+              borderRadius: "4px",
+              padding: "8px 12px",
+              color: "white",
+            }}
+          />
+        </div>
+        
+        <div style={{ marginBottom: "16px", textAlign: "left" }}>
+          <div style={{ marginBottom: "8px" }}>Artist</div>
+          <input
+            type="text"
+            name="artist"
+            value={metadata.artist}
+            onChange={handleInputChange}
+            style={{
+              width: "100%",
+              backgroundColor: "#1a1d20",
+              border: "1px solid #444",
+              borderRadius: "4px",
+              padding: "8px 12px",
+              color: "white",
+            }}
+          />
+        </div>
+        
+        <div style={{ marginBottom: "16px", textAlign: "left" }}>
+          <div style={{ marginBottom: "8px" }}>Album</div>
+          <input
+            type="text"
+            name="album"
+            value={metadata.album}
+            onChange={handleInputChange}
+            style={{
+              width: "100%",
+              backgroundColor: "#1a1d20",
+              border: "1px solid #444",
+              borderRadius: "4px",
+              padding: "8px 12px",
+              color: "white",
+            }}
+          />
+        </div>
+        
+        <div style={{ marginBottom: "24px", textAlign: "left" }}>
+          <div style={{ marginBottom: "8px" }}>Year</div>
+          <input
+            type="text"
+            name="year"
+            value={metadata.year}
+            onChange={handleInputChange}
+            style={{
+              width: "100%",
+              backgroundColor: "#1a1d20",
+              border: "1px solid #444",
+              borderRadius: "4px",
+              padding: "8px 12px",
+              color: "white",
+            }}
+          />
+        </div>
+        
+        <div style={{ 
+          display: "flex", 
+          justifyContent: "center", 
+          gap: "16px",
+          marginTop: "24px",
+        }}>
+          <button
+            onClick={onClose}
+            style={{
+              backgroundColor: "#444",
+              border: "none",
+              borderRadius: "4px",
+              padding: "10px 24px",
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            style={{
+              backgroundColor: "#2563eb",
+              border: "none",
+              borderRadius: "4px",
+              padding: "10px 24px",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              opacity: isSaving ? 0.7 : 1,
+            }}
+          >
+            {isSaving ? (
+              <>
+                <div 
+                  style={{
+                    width: "16px",
+                    height: "16px",
+                    border: "2px solid rgba(255,255,255,0.3)",
+                    borderTop: "2px solid white",
+                    borderRadius: "50%",
+                  }}
+                  className="spin-animation"
+                ></div>
+                Saving...
+              </>
+            ) : (
+              <>
+                <FaSave />
+                Save Changes
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // --- Beatmap Details Page with Edit ---
 function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
@@ -221,6 +549,10 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const navigate = useNavigate();
+  
+  // Add new state for the metadata modal
+  const [isMetadataModalOpen, setIsMetadataModalOpen] = useState(false);
+  const [currentBeatmap, setCurrentBeatmap] = useState(null);
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -228,6 +560,7 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
     setLogs((prev) => [...prev, `Selected file: ${file?.name || ""}`]);
   };
 
+  // --- Update the handleUpload function to better extract metadata ---
   const handleUpload = async (e) => {
     e.preventDefault();
     if (selectedFile) {
@@ -256,18 +589,42 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
           setLogs((prev) => [...prev, "Server processed file successfully"]);
           
           if (data.status === "success") {
-            // Add new beatmap to state
+            // Extract title from filename if not provided
+            let songTitle = data.title;
+            if (!songTitle) {
+              // Try to parse title from filename
+              songTitle = selectedFile.name
+                .replace('.mp3', '')
+                .replace(/_/g, ' ')
+                .replace(/-/g, ' - ');
+            
+              // Check if filename appears to have "Artist - Title" format
+              const hyphenMatch = songTitle.match(/(.+?)\s*-\s*(.+)/);
+              if (hyphenMatch && !data.artist) {
+                // Don't override if artist already provided from metadata
+                songTitle = hyphenMatch[2].trim(); // Use part after hyphen as title
+              }
+            }
+            
+            // Create new beatmap with best-effort metadata
             const newBeatmap = {
               id: data.id,
-              title: data.title || selectedFile.name.replace('.mp3', ''),
-              artist: data.artist || "Unknown Artist",
+              title: songTitle,
+              artist: data.artist || (songTitle.includes(' - ') ? 
+                songTitle.split(' - ')[0].trim() : "Unknown Artist"),
               album: data.album || "Unknown Album",
               year: data.year || new Date().getFullYear().toString(),
+              artwork: data.artwork || null,
               createdAt: new Date().toISOString()
             };
             
+            // Add to beatmaps state
             setBeatmaps(prev => [...prev, newBeatmap]);
             setLogs((prev) => [...prev, `Beatmap created: ${newBeatmap.title}`, "Done!"]);
+            
+            // Open metadata modal with the new beatmap
+            setCurrentBeatmap(newBeatmap);
+            setIsMetadataModalOpen(true);
           } else {
             setLogs((prev) => [...prev, `Server responded with error: ${data.error || 'Unknown error'}`, "Done!"]);
           }
@@ -289,6 +646,16 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
         }
       }
     }
+  };
+
+  // Add handler for metadata updates
+  const handleMetadataUpdate = (updatedBeatmap) => {
+    setBeatmaps(prevBeatmaps => 
+      prevBeatmaps.map(beatmap => 
+        beatmap.id === updatedBeatmap.id ? updatedBeatmap : beatmap
+      )
+    );
+    setLogs(prev => [...prev, `Metadata updated for: ${updatedBeatmap.title}`]);
   };
 
   const handleClearBeatmaps = async () => {
@@ -358,78 +725,85 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
           </form>
         </div>
 
-        {/* Logs section - with proper layout overrides */}
-        <div className="bm-card bm-card-full mt-6 mx-auto">
-          <div className="bm-logs-title" style={{ textAlign: "left", width: "100%" }}>Logs</div>
-          <pre className="bm-log-output" style={{ width: "100%", textAlign: "left" }}>
+        {/* Logs section - doubled width */}
+        <div className="bm-card logs-card mt-6 mx-auto">
+          <div className="bm-logs-title">Logs</div>
+          <pre className="bm-log-output w-full">
             {logs.join("\n")}
           </pre>
         </div>
 
-        {/* Your Beatmaps Section - with proper layout overrides */}
-        <div className="bm-card bm-card-full mt-6 mx-auto">
-          <div style={{ 
-            display: "flex", 
-            justifyContent: "space-between", 
-            alignItems: "center", 
+        {/* Your Beatmaps Section - doubled width */}
+        <div className="bm-card beatmaps-card mt-6 mx-auto">
+          <div style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
             width: "100%",
-            marginBottom: "1rem"
+            textAlign: "left"
           }}>
-            <h2 className="text-xl font-bold">Your Beatmaps</h2>
+            <h2 className="text-xl font-bold" style={{ textAlign: "left" }}>Your Beatmaps</h2>
             {beatmaps.length > 0 && (
               <button
                 onClick={handleClearBeatmaps}
-                className="bg-red-600 hover:bg-red-700 text-white py-1 px-3 rounded text-sm flex items-center"
+                className="bg-red-600 hover:bg-red-700 text-white py-1 px-3 rounded"
               >
-                <FaTrash className="mr-1" /> Clear All
+                <FaTrash className="inline mr-1" /> Clear All
               </button>
             )}
           </div>
 
           {beatmaps.length === 0 ? (
-            <p className="text-gray-400 text-center py-6">No beatmaps yet. Upload an MP3 to create one.</p>
+            <p style={{ textAlign: "center", padding: "1.5rem 0", color: "#9ca3af" }}>
+              No beatmaps yet. Upload an MP3 to create one.
+            </p>
           ) : (
             <div style={{ width: "100%" }}>
               {beatmaps.map((beatmap, index) => (
-                <div key={beatmap.id} style={{ 
-                  width: "100%",
-                  borderBottom: index < beatmaps.length - 1 ? "1px solid #374151" : "none"
-                }}>
-                  <div style={{ 
-                    display: "flex", 
-                    alignItems: "center", 
+                <div key={beatmap.id}>
+                  {index > 0 && <hr style={{ borderColor: "#374151", margin: "0" }} />}
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
                     padding: "1rem",
                     backgroundColor: "#1f2937",
-                    width: "100%"
                   }}>
                     {/* Album Art */}
-                    <div style={{ 
-                      height: "48px", 
-                      width: "48px", 
+                    <div style={{
+                      height: "60px",
+                      width: "60px",
                       backgroundColor: "#374151",
-                      borderRadius: "0.25rem",
                       marginRight: "1rem",
                       flexShrink: 0,
-                      overflow: "hidden"
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
                     }}>
-                      <img 
-                        src={beatmap.artwork || "https://via.placeholder.com/48"} 
-                        alt="Album art"
-                        style={{ height: "100%", width: "100%", objectFit: "cover" }}
-                        onError={(e) => { e.target.src = "https://via.placeholder.com/48"; }}
-                      />
+                      {beatmap.artwork ? (
+                        <img
+                          src={beatmap.artwork}
+                          alt="Album art"
+                          style={{ height: "100%", width: "100%", objectFit: "cover" }}
+                          onError={(e) => { e.target.src = "https://via.placeholder.com/60"; }}
+                        />
+                      ) : (
+                        "Album art"
+                      )}
                     </div>
                     
                     {/* Song Info */}
                     <div style={{ flexGrow: 1, textAlign: "left" }}>
                       <div style={{ fontWeight: "500" }}>{beatmap.title}</div>
-                      <div style={{ fontSize: "0.875rem", color: "#9ca3af" }}>{beatmap.artist}</div>
+                      <div style={{ color: "#9ca3af" }}>{beatmap.artist}</div>
                     </div>
                     
                     {/* Buttons */}
                     <div style={{ display: "flex", gap: "0.75rem" }}>
                       <button
-                        onClick={() => navigate(`/beatmap/${beatmap.id}`)}
+                        onClick={() => {
+                          setCurrentBeatmap(beatmap);
+                          setIsMetadataModalOpen(true);
+                        }}
                         className="bg-blue-600 hover:bg-blue-700 text-white py-1 px-3 rounded text-sm flex items-center"
                       >
                         <FaPencilAlt className="mr-1" /> Edit
@@ -447,6 +821,14 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
             </div>
           )}
         </div>
+
+        {/* Metadata Edit Modal */}
+        <MetadataEditModal
+          isOpen={isMetadataModalOpen}
+          onClose={() => setIsMetadataModalOpen(false)}
+          beatmap={currentBeatmap}
+          onSave={handleMetadataUpdate}
+        />
       </div>
     </div>
   );
