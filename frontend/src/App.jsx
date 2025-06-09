@@ -1,29 +1,25 @@
-import React, { useRef, useState } from "react";
-import { BrowserRouter as Router, Routes, Route, useNavigate, useParams, Navigate } from "react-router-dom";
+import React, { useState, useRef, useEffect } from "react";
+import { BrowserRouter as Router, Routes, Route, Link, useParams, Navigate, useNavigate } from "react-router-dom";
+import { FaUpload, FaMusic, FaTrash, FaPencilAlt, FaDownload, FaSave } from "react-icons/fa";
 import logo from "../logo.png";
-import { FaUpload, FaDownload, FaTrash, FaEye, FaSave } from "react-icons/fa";
-import JSZip from "jszip";
 import { saveAs } from "file-saver";
-import { parseBlob } from "music-metadata-browser";
+import "./App.css";
 
 // --- Beatmap Details Page with Edit ---
-function BeatmapDetails({ beatmaps, setBeatmaps }) {
+function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
   const { id } = useParams();
   const beatmap = beatmaps.find((b) => String(b.id) === id);
   const navigate = useNavigate();
 
-  const [artwork, setArtwork] = useState(beatmap?.artwork || null);
-  const [artworkFile, setArtworkFile] = useState(null);
-  const [editFields, setEditFields] = useState(
-    beatmap
-      ? {
-          title: beatmap.title,
-          artist: beatmap.artist,
-          album: beatmap.album,
-          year: beatmap.year,
-        }
-      : { title: "", artist: "", album: "", year: "" }
-  );
+  const [editMode, setEditMode] = useState(false);
+  const [editFields, setEditFields] = useState({
+    title: beatmap?.title || "",
+    artist: beatmap?.artist || "",
+    album: beatmap?.album || "",
+    year: beatmap?.year || ""
+  });
+
+  const [uploadingMetadata, setUploadingMetadata] = useState(false);
 
   if (!beatmap) {
     return <Navigate to="/" replace />;
@@ -34,188 +30,185 @@ function BeatmapDetails({ beatmaps, setBeatmaps }) {
     setEditFields((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleArtworkChange = (e) => {
-    const file = e.target.files[0];
-    setArtworkFile(file);
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => setArtwork(ev.target.result);
-      reader.readAsDataURL(file);
-    } else {
-      setArtwork(null);
+  const handleSave = async () => {
+    setUploadingMetadata(true);
+    
+    try {
+      // Send updated metadata to backend
+      const response = await fetch("/api/update_metadata", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: beatmap.id,
+          ...editFields
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update metadata");
+      }
+
+      // Update local state
+      setBeatmaps(prev => 
+        prev.map(b => b.id === beatmap.id ? { ...b, ...editFields } : b)
+      );
+      
+      setEditMode(false);
+    } catch (error) {
+      console.error("Error updating metadata:", error);
+      alert("Failed to update metadata. Please try again.");
+    } finally {
+      setUploadingMetadata(false);
     }
   };
 
-  const handleSave = (e) => {
-    e.preventDefault();
-    setBeatmaps((prev) =>
-      prev.map((b) =>
-        b.id === beatmap.id
-          ? {
-              ...b,
-              ...editFields,
-              artwork: artworkFile ? artwork : b.artwork,
-              artworkFile: artworkFile || b.artworkFile,
-            }
-          : b
-      )
-    );
-    navigate("/");
+  const handleDownload = async () => {
+    try {
+      const response = await fetch(`/api/download_beatmap/${beatmap.id}`);
+      if (!response.ok) {
+        throw new Error("Failed to download beatmap");
+      }
+
+      const blob = await response.blob();
+      saveAs(blob, `${beatmap.title}_beatmap.zip`);
+    } catch (error) {
+      console.error("Error downloading beatmap:", error);
+      alert("Failed to download beatmap. Please try again.");
+    }
   };
 
   return (
-    <div className="bm-background">
-      <div className="bm-container" style={{ maxWidth: 600, margin: "0 auto", padding: 24 }}>
-        <button
-          className="btn btn-primary"
-          style={{ marginBottom: 24, background: "#ffd600", color: "#23272b", border: "none", borderRadius: 6, padding: "10px 20px", fontWeight: "bold" }}
-          onClick={() => navigate("/")}
-        >
-          Back to Beatmaps
-        </button>
-        <div className="bm-card" style={{ padding: 32 }}>
-          <h2 style={{ color: "#ffd600", marginBottom: 24, textAlign: "center" }}>Edit Beatmap Metadata</h2>
-          <form onSubmit={handleSave} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
-              <div style={{
-                width: 160,
-                height: 160,
-                background: "#e9ecef",
-                borderRadius: 8,
-                overflow: "hidden",
-                boxShadow: "0 3px 6px rgba(0,0,0,0.1)",
-                border: "1px solid #ddd",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center"
-              }}>
-                {artwork ? (
-                  <img src={artwork} alt="Album Art" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                ) : (
-                  <span style={{ color: "#aaa" }}>No artwork</span>
-                )
-                }
+    <div className="bm-background min-h-screen pb-12">
+      <div className="bm-container max-w-4xl mx-auto pt-16 px-4">
+        <div className="flex justify-center mb-8">
+          <img src={logo} alt="BeatMapper Logo" style={{ maxWidth: "200px" }} />
+        </div>
+
+        <div className="mb-4">
+          <Link to="/" className="text-blue-400 hover:text-blue-300 inline-block">
+            &larr; Back to Home
+          </Link>
+        </div>
+
+        <div className="bm-card">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-2xl font-bold">{editMode ? "Edit Beatmap" : "Beatmap Details"}</h2>
+            <div>
+              {!editMode && (
+                <>
+                  <button
+                    onClick={() => setEditMode(true)}
+                    className="mr-2 bg-yellow-500 hover:bg-yellow-600 text-black py-1 px-3 rounded"
+                  >
+                    <FaPencilAlt className="inline mr-1" /> Edit
+                  </button>
+                  <button
+                    onClick={handleDownload}
+                    className="bg-green-600 hover:bg-green-700 text-white py-1 px-3 rounded"
+                  >
+                    <FaDownload className="inline mr-1" /> Download
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {editMode ? (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold mb-1">Song Title:</label>
+                <input
+                  type="text"
+                  name="title"
+                  value={editFields.title}
+                  onChange={handleChange}
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2"
+                />
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ color: "#eee", fontWeight: 500 }}>Title</label>
-                  <input
-                    type="text"
-                    name="title"
-                    value={editFields.title}
-                    onChange={handleChange}
-                    required
-                    style={{
-                      width: "100%",
-                      marginTop: 4,
-                      padding: 8,
-                      borderRadius: 4,
-                      border: "1px solid #444",
-                      background: "#23272b",
-                      color: "#ffd600",
-                      fontSize: "1rem"
-                    }}
-                  />
-                </div>
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ color: "#eee", fontWeight: 500 }}>Artist</label>
-                  <input
-                    type="text"
-                    name="artist"
-                    value={editFields.artist}
-                    onChange={handleChange}
-                    required
-                    style={{
-                      width: "100%",
-                      marginTop: 4,
-                      padding: 8,
-                      borderRadius: 4,
-                      border: "1px solid #444",
-                      background: "#23272b",
-                      color: "#ffd600",
-                      fontSize: "1rem"
-                    }}
-                  />
-                </div>
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ color: "#eee", fontWeight: 500 }}>Album</label>
-                  <input
-                    type="text"
-                    name="album"
-                    value={editFields.album}
-                    onChange={handleChange}
-                    style={{
-                      width: "100%",
-                      marginTop: 4,
-                      padding: 8,
-                      borderRadius: 4,
-                      border: "1px solid #444",
-                      background: "#23272b",
-                      color: "#ffd600",
-                      fontSize: "1rem"
-                    }}
-                  />
-                </div>
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ color: "#eee", fontWeight: 500 }}>Year</label>
-                  <input
-                    type="number"
-                    name="year"
-                    value={editFields.year}
-                    onChange={handleChange}
-                    style={{
-                      width: "100%",
-                      marginTop: 4,
-                      padding: 8,
-                      borderRadius: 4,
-                      border: "1px solid #444",
-                      background: "#23272b",
-                      color: "#ffd600",
-                      fontSize: "1rem"
-                    }}
-                  />
-                </div>
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ color: "#eee", fontWeight: 500 }}>Artwork Image (JPG or PNG)</label>
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png"
-                    onChange={handleArtworkChange}
-                    style={{
-                      width: "100%",
-                      marginTop: 4,
-                      padding: 8,
-                      borderRadius: 4,
-                      border: "1px solid #444",
-                      background: "#23272b",
-                      color: "#ffd600",
-                      fontSize: "1rem"
-                    }}
-                  />
-                </div>
+
+              <div>
+                <label className="block text-sm font-semibold mb-1">Artist:</label>
+                <input
+                  type="text"
+                  name="artist"
+                  value={editFields.artist}
+                  onChange={handleChange}
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold mb-1">Album:</label>
+                <input
+                  type="text"
+                  name="album"
+                  value={editFields.album}
+                  onChange={handleChange}
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold mb-1">Year:</label>
+                <input
+                  type="text"
+                  name="year"
+                  value={editFields.year}
+                  onChange={handleChange}
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2"
+                />
+              </div>
+
+              <div className="flex justify-end space-x-2 mt-4">
+                <button
+                  onClick={() => setEditMode(false)}
+                  className="bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={uploadingMetadata}
+                  className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded flex items-center"
+                >
+                  {uploadingMetadata ? (
+                    <>
+                      <span className="mr-2">Saving...</span>
+                      <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full"></div>
+                    </>
+                  ) : (
+                    <>
+                      <FaSave className="mr-2" /> Save Changes
+                    </>
+                  )}
+                </button>
               </div>
             </div>
+          ) : (
+            <div className="space-y-2">
+              <p><strong>Title:</strong> {beatmap.title}</p>
+              <p><strong>Artist:</strong> {beatmap.artist}</p>
+              <p><strong>Album:</strong> {beatmap.album}</p>
+              <p><strong>Year:</strong> {beatmap.year}</p>
+              <p><strong>Created:</strong> {new Date(beatmap.createdAt).toLocaleString()}</p>
+            </div>
+          )}
+
+          <div className="mt-6 border-t border-gray-700 pt-4">
             <button
-              type="submit"
-              className="btn btn-success"
-              style={{
-                background: "#ffd600",
-                color: "#23272b",
-                border: "none",
-                borderRadius: 6,
-                padding: "12px 24px",
-                fontWeight: "bold",
-                width: "100%",
-                marginTop: 12,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "1.1rem"
+              onClick={() => {
+                if (window.confirm("Are you sure you want to delete this beatmap?")) {
+                  onDelete(beatmap.id);
+                  navigate("/");
+                }
               }}
+              className="bg-red-600 hover:bg-red-700 text-white py-1 px-3 rounded"
             >
-              <FaSave style={{ marginRight: 8 }} /> Save Changes
+              <FaTrash className="inline mr-1" /> Delete Beatmap
             </button>
-          </form>
+          </div>
         </div>
       </div>
     </div>
@@ -223,12 +216,10 @@ function BeatmapDetails({ beatmaps, setBeatmaps }) {
 }
 
 // --- Home Page ---
-function Home({ beatmaps, setBeatmaps, logs, setLogs }) {
+function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
   const fileInputRef = useRef();
-  const albumArtRef = useRef();
   const [selectedFile, setSelectedFile] = useState(null);
-  const [selectedAlbumArt, setSelectedAlbumArt] = useState(null);
-  const [albumArtPreview, setAlbumArtPreview] = useState(null);
+  const [uploading, setUploading] = useState(false);
   const navigate = useNavigate();
 
   const handleFileChange = (e) => {
@@ -237,37 +228,18 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs }) {
     setLogs((prev) => [...prev, `Selected file: ${file?.name || ""}`]);
   };
 
-  const handleAlbumArtChange = (e) => {
-    const file = e.target.files[0];
-    setSelectedAlbumArt(file);
-    
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => setAlbumArtPreview(e.target.result);
-      reader.readAsDataURL(file);
-      setLogs((prev) => [...prev, `Selected album art: ${file.name}`]);
-    } else {
-      setAlbumArtPreview(null);
-    }
-  };
-
   const handleUpload = async (e) => {
     e.preventDefault();
     if (selectedFile) {
+      setUploading(true);
       setLogs((prev) => [...prev, `Uploading: ${selectedFile.name}`]);
       const formData = new FormData();
       formData.append("file", selectedFile);
       
-      // Add album art if selected
-      if (selectedAlbumArt) {
-        formData.append("album", selectedAlbumArt);
-        setLogs((prev) => [...prev, `Including album art: ${selectedAlbumArt.name}`]);
-      }
-
       setLogs((prev) => [...prev, "Preparing upload..."]);
       try {
         setLogs((prev) => [...prev, "Sending file to server..."]);
-        const response = await fetch("http://localhost:5000/api/upload", {
+        const response = await fetch("/api/upload", {
           method: "POST",
           body: formData,
         });
@@ -275,28 +247,83 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs }) {
         setLogs((prev) => [...prev, "Awaiting server response..."]);
         if (!response.ok) {
           setLogs((prev) => [...prev, `Server responded with status: ${response.status}`]);
-          throw new Error("Upload failed");
+          throw new Error(`Upload failed with status: ${response.status}`);
         }
-        setLogs((prev) => [...prev, "Server responded, downloading ZIP..."]);
-        const blob = await response.blob();
-        setLogs((prev) => [...prev, "Saving ZIP to your computer..."]);
-        saveAs(blob, `${selectedFile.name.replace(".mp3", "")}_beatmap.zip`);
-        setLogs((prev) => [...prev, "Beatmap package ready for download!", "Done!"]);
+        
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await response.json();
+          setLogs((prev) => [...prev, "Server processed file successfully"]);
+          
+          if (data.status === "success") {
+            // Add new beatmap to state
+            const newBeatmap = {
+              id: data.id,
+              title: data.title || selectedFile.name.replace('.mp3', ''),
+              artist: data.artist || "Unknown Artist",
+              album: data.album || "Unknown Album",
+              year: data.year || new Date().getFullYear().toString(),
+              createdAt: new Date().toISOString()
+            };
+            
+            setBeatmaps(prev => [...prev, newBeatmap]);
+            setLogs((prev) => [...prev, `Beatmap created: ${newBeatmap.title}`, "Done!"]);
+          } else {
+            setLogs((prev) => [...prev, `Server responded with error: ${data.error || 'Unknown error'}`, "Done!"]);
+          }
+        } else {
+          // Handle binary response (ZIP file download)
+          const blob = await response.blob();
+          const filename = `${selectedFile.name.replace(".mp3", "")}_beatmap.zip`;
+          saveAs(blob, filename);
+          
+          setLogs((prev) => [...prev, `Downloaded beatmap package: ${filename}`, "Done!"]);
+        }
       } catch (err) {
         setLogs((prev) => [...prev, `Upload failed: ${err.message}`, "Done!"]);
+      } finally {
+        setUploading(false);
+        setSelectedFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
       }
-      setLogs((prev) => [...prev, "Resetting file input."]);
-      setSelectedFile(null);
-      setSelectedAlbumArt(null);
-      setAlbumArtPreview(null);
+    }
+  };
+
+  const handleClearBeatmaps = async () => {
+    if (!window.confirm("Are you sure you want to clear all beatmaps? This action cannot be undone.")) {
+      return;
+    }
+    
+    try {
+      const response = await fetch("/api/clear_beatmaps", {
+        method: "POST"
+      });
+      
+      if (!response.ok) {
+        throw new Error("Failed to clear beatmaps");
+      }
+      
+      setBeatmaps([]);
+      setLogs((prev) => [...prev, "All beatmaps cleared"]);
+    } catch (error) {
+      console.error("Error clearing beatmaps:", error);
+      setLogs((prev) => [...prev, `Failed to clear beatmaps: ${error.message}`]);
     }
   };
 
   return (
-    <div className="bm-background">
-      <div className="bm-container">
-        <img src={logo} alt="BeatMapper Logo" className="bm-logo" />
+    <div className="bm-background min-h-screen pb-12">
+      <div className="bm-container pt-16">
+        {/* Logo with more space */}
+        <div className="flex justify-center mb-8">
+          <img src={logo} alt="BeatMapper Logo" className="bm-logo" style={{ maxWidth: "200px" }} />
+        </div>
+        
+        {/* Upload section */}
         <div className="bm-card">
+          <h2 className="text-xl font-bold mb-4">Upload New Song</h2>
           <form onSubmit={handleUpload} style={{ width: "100%" }}>
             <input
               ref={fileInputRef}
@@ -305,125 +332,84 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs }) {
               onChange={handleFileChange}
               className="bm-file-input"
             />
-            <input
-              ref={albumArtRef}
-              type="file"
-              accept="image/jpeg,image/png"
-              onChange={handleAlbumArtChange}
-              className="bm-file-input"
-            />
             <button
               type="button"
-              className="bm-browse-btn"
+              className="bm-browse-btn mb-4"
               onClick={() => fileInputRef.current.click()}
             >
               {selectedFile ? selectedFile.name : "Browse for MP3"}
             </button>
             <button
-              type="button"
-              className="bm-browse-btn"
-              onClick={() => albumArtRef.current.click()}
-            >
-              {selectedAlbumArt ? selectedAlbumArt.name : "Browse for Album Art (optional)"}
-            </button>
-            {albumArtPreview && (
-              <div style={{ textAlign: "center", marginBottom: "16px" }}>
-                <img 
-                  src={albumArtPreview} 
-                  alt="Album Art Preview" 
-                  style={{ 
-                    maxWidth: "100%", 
-                    maxHeight: "120px", 
-                    borderRadius: "4px",
-                    border: "1px solid #444" 
-                  }} 
-                />
-              </div>
-            )}
-            <button
               type="submit"
               className="bm-upload-btn"
-              disabled={!selectedFile}
+              disabled={!selectedFile || uploading}
             >
-              <FaUpload style={{ marginRight: 8, marginBottom: -2 }} />
-              Upload
+              {uploading ? (
+                <div className="flex items-center justify-center">
+                  <div className="animate-spin mr-2 h-5 w-5 border-2 border-white border-t-transparent rounded-full"></div>
+                  <span>Uploading...</span>
+                </div>
+              ) : (
+                <>
+                  <FaUpload style={{ marginRight: 8 }} /> Upload
+                </>
+              )}
             </button>
           </form>
         </div>
-        <div className="bm-card bm-logs">
+
+        {/* Logs section */}
+        <div className="bm-card bm-logs mt-6">
           <div className="bm-logs-title">Logs</div>
-          <pre className="bm-log-output">{logs.join("\n")}</pre>
+          <pre className="bm-log-output">
+            {logs.join("\n")}
+          </pre>
         </div>
-        <div className="bm-card">
-          <div className="bm-logs-title" style={{ marginBottom: 16 }}>
-            Your Beatmaps
+
+        {/* Your Beatmaps Section - moved below logs */}
+        <div className="bm-card mt-6">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-bold">Your Beatmaps</h2>
+            {beatmaps.length > 0 && (
+              <button
+                onClick={handleClearBeatmaps}
+                className="bg-red-600 hover:bg-red-700 text-white py-1 px-3 rounded text-sm"
+              >
+                <FaTrash className="inline mr-1" /> Clear All
+              </button>
+            )}
           </div>
+
           {beatmaps.length === 0 ? (
-            <div className="alert alert-info">
-              No beatmaps found. Upload an MP3 file to create one!
-            </div>
+            <p className="text-gray-400 text-center py-6">No beatmaps yet. Upload an MP3 to create one.</p>
           ) : (
-            <ul
-              className="beatmap-list"
-              style={{ width: "100%", padding: 0, margin: 0 }}
-            >
-              {beatmaps.map((b) => (
-                <li
-                  key={b.id}
-                  className="beatmap-item"
-                  style={{
-                    border: "1px solid #e9ecef",
-                    borderRadius: 4,
-                    marginBottom: 16,
-                    padding: 16,
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    background: "#23272b",
-                  }}
+            <div className="space-y-2">
+              {beatmaps.map((beatmap) => (
+                <div
+                  key={beatmap.id}
+                  className="flex justify-between items-center p-3 bg-gray-800 rounded hover:bg-gray-700 transition"
                 >
                   <div>
-                    <span
-                      className="beatmap-title"
-                      style={{ fontWeight: 600 }}
-                    >
-                      {b.title}
-                    </span>
-                    <span
-                      className="beatmap-artist"
-                      style={{ marginLeft: 8, color: "#aaa" }}
-                    >
-                      by {b.artist}
-                    </span>
+                    <div className="font-medium">{beatmap.title}</div>
+                    <div className="text-sm text-gray-400">{beatmap.artist}</div>
                   </div>
-                  <div
-                    className="beatmap-actions"
-                    style={{ display: "flex", gap: 8 }}
-                  >
+                  <div className="flex space-x-2">
                     <button
-                      className="btn btn-primary"
-                      style={{ marginRight: 4 }}
-                      onClick={() => navigate(`/beatmap/${b.id}`)}
+                      onClick={() => navigate(`/beatmap/${beatmap.id}`)}
+                      className="bg-blue-600 hover:bg-blue-700 text-white py-1 px-2 rounded text-sm"
                     >
-                      <FaEye /> Details
+                      <FaPencilAlt className="inline mr-1" /> Edit
                     </button>
                     <button
-                      className="btn btn-success"
-                      style={{ marginRight: 4 }}
-                      onClick={() => handleDownload(b)}
+                      onClick={() => onDelete(beatmap.id)}
+                      className="bg-red-600 hover:bg-red-700 text-white py-1 px-2 rounded text-sm"
                     >
-                      <FaDownload /> Download
-                    </button>
-                    <button
-                      className="btn btn-danger"
-                      onClick={() => handleDelete(b.id)}
-                    >
-                      <FaTrash /> Delete
+                      <FaTrash className="inline" />
                     </button>
                   </div>
-                </li>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
         </div>
       </div>
@@ -433,8 +419,53 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs }) {
 
 // --- Main App with Routing ---
 export default function App() {
+  const [beatmaps, setBeatmaps] = useState(() => {
+    // Load beatmaps from localStorage on startup
+    const savedBeatmaps = localStorage.getItem("beatmaps");
+    return savedBeatmaps ? JSON.parse(savedBeatmaps) : [];
+  });
+  
   const [logs, setLogs] = useState(["Ready."]);
-  const [beatmaps, setBeatmaps] = useState([]);
+
+  // Save beatmaps to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem("beatmaps", JSON.stringify(beatmaps));
+  }, [beatmaps]);
+
+  // Fetch existing beatmaps from server on load
+  useEffect(() => {
+    const fetchBeatmaps = async () => {
+      try {
+        const response = await fetch("/api/beatmaps");
+        if (response.ok) {
+          const data = await response.json();
+          setBeatmaps(data.beatmaps);
+        }
+      } catch (error) {
+        console.error("Failed to fetch beatmaps:", error);
+        // If server fetch fails, we'll still have local storage as backup
+      }
+    };
+
+    fetchBeatmaps();
+  }, []);
+
+  const handleDeleteBeatmap = async (id) => {
+    try {
+      // Send delete request to server
+      await fetch(`/api/beatmap/${id}`, {
+        method: "DELETE"
+      });
+      
+      // Update local state
+      setBeatmaps(prev => prev.filter(b => b.id !== id));
+      setLogs(prev => [...prev, `Deleted beatmap ID: ${id}`]);
+    } catch (error) {
+      console.error("Failed to delete beatmap:", error);
+      setLogs(prev => [...prev, `Failed to delete beatmap: ${error.message}`]);
+    }
+  };
+
   return (
     <Router>
       <Routes>
@@ -446,6 +477,7 @@ export default function App() {
               setBeatmaps={setBeatmaps}
               logs={logs}
               setLogs={setLogs}
+              onDelete={handleDeleteBeatmap}
             />
           }
         />
@@ -455,6 +487,7 @@ export default function App() {
             <BeatmapDetails
               beatmaps={beatmaps}
               setBeatmaps={setBeatmaps}
+              onDelete={handleDeleteBeatmap}
             />
           }
         />
