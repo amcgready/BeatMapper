@@ -124,4 +124,16 @@ MIT License
 
 ---
 
+## 🥁 Multi-process Drum Recognition Pipeline
+
+BeatMapper uses a sophisticated multi-process pipeline for accurate drum recognition:
+
+1. **Spleeter Separation**: The audio is first processed by Spleeter, which runs in its own virtual environment and subprocess. Spleeter separates the audio into different stems, allowing for isolated drum track analysis.
+2. **Librosa Onset Detection**: The separated drum track is then analyzed using Librosa's onset detection in a Python process. This step detects the precise moments when each drum hit occurs.
+3. **(Optional) Madmom Onset Detection**: As an option, Madmom's onset detection can be used in another Python process for comparison or improved accuracy.
+
+This pipeline ensures that drum hits are detected with high precision, providing an excellent basis for the generated drum charts.
+
+---
+
 **Enjoy mapping your favorite songs to Drums Rock!**

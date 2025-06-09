@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { BrowserRouter as Router, Routes, Route, useNavigate, useParams } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, useNavigate, useParams, Navigate } from "react-router-dom";
 import logo from "../logo.png";
 import { FaUpload, FaDownload, FaTrash, FaEye, FaSave } from "react-icons/fa";
 import JSZip from "jszip";
@@ -25,10 +25,13 @@ function BeatmapDetails({ beatmaps, setBeatmaps }) {
       : { title: "", artist: "", album: "", year: "" }
   );
 
-  if (!beatmap) return <div className="bm-card" style={{ margin: "32px auto", maxWidth: 500 }}>Beatmap not found.</div>;
+  if (!beatmap) {
+    return <Navigate to="/" replace />;
+  }
 
   const handleChange = (e) => {
-    setEditFields((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+    const { name, value } = e.target;
+    setEditFields((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleArtworkChange = (e) => {
@@ -90,7 +93,8 @@ function BeatmapDetails({ beatmaps, setBeatmaps }) {
                   <img src={artwork} alt="Album Art" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 ) : (
                   <span style={{ color: "#aaa" }}>No artwork</span>
-                )}
+                )
+                }
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ marginBottom: 12 }}>
@@ -221,7 +225,10 @@ function BeatmapDetails({ beatmaps, setBeatmaps }) {
 // --- Home Page ---
 function Home({ beatmaps, setBeatmaps, logs, setLogs }) {
   const fileInputRef = useRef();
+  const albumArtRef = useRef();
   const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedAlbumArt, setSelectedAlbumArt] = useState(null);
+  const [albumArtPreview, setAlbumArtPreview] = useState(null);
   const navigate = useNavigate();
 
   const handleFileChange = (e) => {
@@ -230,60 +237,59 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs }) {
     setLogs((prev) => [...prev, `Selected file: ${file?.name || ""}`]);
   };
 
+  const handleAlbumArtChange = (e) => {
+    const file = e.target.files[0];
+    setSelectedAlbumArt(file);
+    
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => setAlbumArtPreview(e.target.result);
+      reader.readAsDataURL(file);
+      setLogs((prev) => [...prev, `Selected album art: ${file.name}`]);
+    } else {
+      setAlbumArtPreview(null);
+    }
+  };
+
   const handleUpload = async (e) => {
     e.preventDefault();
     if (selectedFile) {
       setLogs((prev) => [...prev, `Uploading: ${selectedFile.name}`]);
-      setTimeout(async () => {
-        setLogs((prev) => [...prev, "Processing..."]);
-        try {
-          // Read file as Blob for music-metadata-browser
-          const fileBlob = new Blob([selectedFile], { type: selectedFile.type });
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      
+      // Add album art if selected
+      if (selectedAlbumArt) {
+        formData.append("album", selectedAlbumArt);
+        setLogs((prev) => [...prev, `Including album art: ${selectedAlbumArt.name}`]);
+      }
 
+      setLogs((prev) => [...prev, "Preparing upload..."]);
+      try {
+        setLogs((prev) => [...prev, "Sending file to server..."]);
+        const response = await fetch("http://localhost:5000/api/upload", {
+          method: "POST",
+          body: formData,
+        });
 
-          const metadata = await parseBlob(selectedFile);
-          console.log(metadata); // See what is actually extracted
-          const common = metadata.common || {};
-          setBeatmaps((prev) => [
-            ...prev,
-            {
-              id: Date.now(),
-              title: common.title || selectedFile.name.replace(".mp3", ""),
-              artist: common.artist || "Unknown",
-              album: common.album || "",
-              year: common.year || "",
-              file: selectedFile,
-            },
-          ]);
-          setLogs((prev) => [...prev, "Metadata extracted.", "Done!"]);
-        } catch {
-          setBeatmaps((prev) => [
-            ...prev,
-            {
-              id: Date.now(),
-              title: selectedFile.name.replace(".mp3", ""),
-              artist: "Unknown",
-              album: "",
-              year: "",
-              file: selectedFile,
-            },
-          ]);
-          setLogs((prev) => [...prev, "Could not extract metadata.", "Done!"]);
+        setLogs((prev) => [...prev, "Awaiting server response..."]);
+        if (!response.ok) {
+          setLogs((prev) => [...prev, `Server responded with status: ${response.status}`]);
+          throw new Error("Upload failed");
         }
-        setSelectedFile(null);
-      }, 800);
+        setLogs((prev) => [...prev, "Server responded, downloading ZIP..."]);
+        const blob = await response.blob();
+        setLogs((prev) => [...prev, "Saving ZIP to your computer..."]);
+        saveAs(blob, `${selectedFile.name.replace(".mp3", "")}_beatmap.zip`);
+        setLogs((prev) => [...prev, "Beatmap package ready for download!", "Done!"]);
+      } catch (err) {
+        setLogs((prev) => [...prev, `Upload failed: ${err.message}`, "Done!"]);
+      }
+      setLogs((prev) => [...prev, "Resetting file input."]);
+      setSelectedFile(null);
+      setSelectedAlbumArt(null);
+      setAlbumArtPreview(null);
     }
-  };
-
-  const handleDelete = (id) => {
-    setBeatmaps((prev) => prev.filter((b) => b.id !== id));
-  };
-
-  const handleDownload = async (beatmap) => {
-    const zip = new JSZip();
-    zip.file(beatmap.title + ".mp3", beatmap.file);
-    const blob = await zip.generateAsync({ type: "blob" });
-    saveAs(blob, `${beatmap.title}.zip`);
   };
 
   return (
@@ -299,6 +305,13 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs }) {
               onChange={handleFileChange}
               className="bm-file-input"
             />
+            <input
+              ref={albumArtRef}
+              type="file"
+              accept="image/jpeg,image/png"
+              onChange={handleAlbumArtChange}
+              className="bm-file-input"
+            />
             <button
               type="button"
               className="bm-browse-btn"
@@ -306,6 +319,27 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs }) {
             >
               {selectedFile ? selectedFile.name : "Browse for MP3"}
             </button>
+            <button
+              type="button"
+              className="bm-browse-btn"
+              onClick={() => albumArtRef.current.click()}
+            >
+              {selectedAlbumArt ? selectedAlbumArt.name : "Browse for Album Art (optional)"}
+            </button>
+            {albumArtPreview && (
+              <div style={{ textAlign: "center", marginBottom: "16px" }}>
+                <img 
+                  src={albumArtPreview} 
+                  alt="Album Art Preview" 
+                  style={{ 
+                    maxWidth: "100%", 
+                    maxHeight: "120px", 
+                    borderRadius: "4px",
+                    border: "1px solid #444" 
+                  }} 
+                />
+              </div>
+            )}
             <button
               type="submit"
               className="bm-upload-btn"

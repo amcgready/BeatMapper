@@ -20,6 +20,7 @@ if errorlevel 1 (
 )
 
 echo Installing Python dependencies...
+py -3.10 -m pip install --upgrade pip
 py -3.10 -m pip install -r backend\requirements.txt
 if errorlevel 1 (
     echo Python dependency install failed!

@@ -1,6 +1,8 @@
 import unittest
 import os
 from backend.processing import audio_converter, preview_generator, info_generator, notes_generator
+import madmom
+import numpy as np
 
 class TestProcessing(unittest.TestCase):
     def setUp(self):
@@ -42,6 +44,12 @@ class TestProcessing(unittest.TestCase):
         # This test assumes Spleeter/madmom are installed and the template exists
         notes_generator.generate_notes_csv(self.test_mp3, self.template, self.test_notes, bpm=120, quantization=16)
         self.assertTrue(os.path.exists(self.test_notes))
+
+    # 4. Add madmom drum detection as a separate process (optional, advanced)
+    def madmom_onsets(self, audio_path):
+        proc = madmom.features.onsets.OnsetPeakPickingProcessor(fps=100)
+        act = madmom.features.onsets.OnsetPeakPickingProcessor()(audio_path)
+        return act  # List of onset times in seconds
 
 if __name__ == "__main__":
     unittest.main()
