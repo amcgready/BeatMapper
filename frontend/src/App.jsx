@@ -315,14 +315,14 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
 
   return (
     <div className="bm-background min-h-screen pb-12">
-      <div className="bm-container pt-16">
+      <div className="bm-container pt-16" style={{ maxWidth: "100%", padding: "0 20px" }}>
         {/* Logo with more space */}
         <div className="flex justify-center mb-8">
           <img src={logo} alt="BeatMapper Logo" className="bm-logo" style={{ maxWidth: "200px" }} />
         </div>
         
         {/* Upload section */}
-        <div className="bm-card">
+        <div className="bm-card w-full max-w-4xl mx-auto">
           <h2 className="text-xl font-bold mb-4">Upload New Song</h2>
           <form onSubmit={handleUpload} style={{ width: "100%" }}>
             <input
@@ -358,24 +358,30 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
           </form>
         </div>
 
-        {/* Logs section */}
-        <div className="bm-card bm-logs mt-6">
-          <div className="bm-logs-title">Logs</div>
-          <pre className="bm-log-output">
+        {/* Logs section - with proper layout overrides */}
+        <div className="bm-card bm-card-full mt-6 mx-auto">
+          <div className="bm-logs-title" style={{ textAlign: "left", width: "100%" }}>Logs</div>
+          <pre className="bm-log-output" style={{ width: "100%", textAlign: "left" }}>
             {logs.join("\n")}
           </pre>
         </div>
 
-        {/* Your Beatmaps Section - moved below logs */}
-        <div className="bm-card mt-6">
-          <div className="flex justify-between items-center mb-4">
+        {/* Your Beatmaps Section - with proper layout overrides */}
+        <div className="bm-card bm-card-full mt-6 mx-auto">
+          <div style={{ 
+            display: "flex", 
+            justifyContent: "space-between", 
+            alignItems: "center", 
+            width: "100%",
+            marginBottom: "1rem"
+          }}>
             <h2 className="text-xl font-bold">Your Beatmaps</h2>
             {beatmaps.length > 0 && (
               <button
                 onClick={handleClearBeatmaps}
-                className="bg-red-600 hover:bg-red-700 text-white py-1 px-3 rounded text-sm"
+                className="bg-red-600 hover:bg-red-700 text-white py-1 px-3 rounded text-sm flex items-center"
               >
-                <FaTrash className="inline mr-1" /> Clear All
+                <FaTrash className="mr-1" /> Clear All
               </button>
             )}
           </div>
@@ -383,29 +389,58 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
           {beatmaps.length === 0 ? (
             <p className="text-gray-400 text-center py-6">No beatmaps yet. Upload an MP3 to create one.</p>
           ) : (
-            <div className="space-y-2">
-              {beatmaps.map((beatmap) => (
-                <div
-                  key={beatmap.id}
-                  className="flex justify-between items-center p-3 bg-gray-800 rounded hover:bg-gray-700 transition"
-                >
-                  <div>
-                    <div className="font-medium">{beatmap.title}</div>
-                    <div className="text-sm text-gray-400">{beatmap.artist}</div>
-                  </div>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => navigate(`/beatmap/${beatmap.id}`)}
-                      className="bg-blue-600 hover:bg-blue-700 text-white py-1 px-2 rounded text-sm"
-                    >
-                      <FaPencilAlt className="inline mr-1" /> Edit
-                    </button>
-                    <button
-                      onClick={() => onDelete(beatmap.id)}
-                      className="bg-red-600 hover:bg-red-700 text-white py-1 px-2 rounded text-sm"
-                    >
-                      <FaTrash className="inline" />
-                    </button>
+            <div style={{ width: "100%" }}>
+              {beatmaps.map((beatmap, index) => (
+                <div key={beatmap.id} style={{ 
+                  width: "100%",
+                  borderBottom: index < beatmaps.length - 1 ? "1px solid #374151" : "none"
+                }}>
+                  <div style={{ 
+                    display: "flex", 
+                    alignItems: "center", 
+                    padding: "1rem",
+                    backgroundColor: "#1f2937",
+                    width: "100%"
+                  }}>
+                    {/* Album Art */}
+                    <div style={{ 
+                      height: "48px", 
+                      width: "48px", 
+                      backgroundColor: "#374151",
+                      borderRadius: "0.25rem",
+                      marginRight: "1rem",
+                      flexShrink: 0,
+                      overflow: "hidden"
+                    }}>
+                      <img 
+                        src={beatmap.artwork || "https://via.placeholder.com/48"} 
+                        alt="Album art"
+                        style={{ height: "100%", width: "100%", objectFit: "cover" }}
+                        onError={(e) => { e.target.src = "https://via.placeholder.com/48"; }}
+                      />
+                    </div>
+                    
+                    {/* Song Info */}
+                    <div style={{ flexGrow: 1, textAlign: "left" }}>
+                      <div style={{ fontWeight: "500" }}>{beatmap.title}</div>
+                      <div style={{ fontSize: "0.875rem", color: "#9ca3af" }}>{beatmap.artist}</div>
+                    </div>
+                    
+                    {/* Buttons */}
+                    <div style={{ display: "flex", gap: "0.75rem" }}>
+                      <button
+                        onClick={() => navigate(`/beatmap/${beatmap.id}`)}
+                        className="bg-blue-600 hover:bg-blue-700 text-white py-1 px-3 rounded text-sm flex items-center"
+                      >
+                        <FaPencilAlt className="mr-1" /> Edit
+                      </button>
+                      <button
+                        onClick={() => onDelete(beatmap.id)}
+                        className="bg-red-600 hover:bg-red-700 text-white py-1 px-3 rounded text-sm flex items-center"
+                      >
+                        <FaTrash className="mr-1" /> Delete
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}

@@ -49,6 +49,16 @@ body, html, #root {
   align-items: center;
 }
 
+.bm-card-wide {
+  max-width: 800px; /* Double the width */
+}
+
+.bm-card-full {
+  max-width: 1800px; /* Very wide for lists */
+  display: block;  /* Override flex display */
+  align-items: initial; /* Reset alignment */
+}
+
 .bm-file-input {
   display: none;
 }
