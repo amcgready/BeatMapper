@@ -4,6 +4,7 @@ import { FaUpload, FaMusic, FaTrash, FaPencilAlt, FaDownload, FaSave, FaTimes } 
 import logo from "../logo.png";
 import { saveAs } from "file-saver";
 import "./App.css";
+import { extractMP3Metadata } from './utils/audioMetadata';
 
 // --- Improved Metadata Edit Modal Component ---
 function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {
@@ -553,14 +554,37 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
   // Add new state for the metadata modal
   const [isMetadataModalOpen, setIsMetadataModalOpen] = useState(false);
   const [currentBeatmap, setCurrentBeatmap] = useState(null);
+  // Add state to store extracted metadata
+  const [extractedMetadata, setExtractedMetadata] = useState(null);
 
-  const handleFileChange = (e) => {
+  const handleFileChange = async (e) => {
     const file = e.target.files[0];
+    if (!file) return;
+    
     setSelectedFile(file);
-    setLogs((prev) => [...prev, `Selected file: ${file?.name || ""}`]);
+    setLogs((prev) => [...prev, `Selected file: ${file.name}`]);
+    
+    // Extract metadata from the file when selected
+    setLogs((prev) => [...prev, "Extracting metadata from file..."]);
+    try {
+      const metadata = await extractMP3Metadata(file);
+      setLogs((prev) => [...prev, 
+        `Metadata extracted:`,
+        `- Title: ${metadata.title || 'Not found'}`,
+        `- Artist: ${metadata.artist || 'Not found'}`,
+        `- Album: ${metadata.album || 'Not found'}`,
+        `- Year: ${metadata.year || 'Not found'}`,
+        `- Artwork: ${metadata.artwork ? 'Found' : 'Not found'}`
+      ]);
+      setExtractedMetadata(metadata);
+    } catch (error) {
+      console.error("Error extracting metadata:", error);
+      setLogs((prev) => [...prev, `Error extracting metadata: ${error.message}`]);
+      setExtractedMetadata(null);
+    }
   };
 
-  // --- Update the handleUpload function to better extract metadata ---
+  // --- Update the handleUpload function to use extracted metadata ---
   const handleUpload = async (e) => {
     e.preventDefault();
     if (selectedFile) {
@@ -568,6 +592,26 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
       setLogs((prev) => [...prev, `Uploading: ${selectedFile.name}`]);
       const formData = new FormData();
       formData.append("file", selectedFile);
+      
+      // Add metadata to form if available
+      if (extractedMetadata) {
+        if (extractedMetadata.artwork) {
+          // Convert data URL to Blob for uploading
+          try {
+            const response = await fetch(extractedMetadata.artwork);
+            const blob = await response.blob();
+            formData.append("artwork", blob, "artwork.jpg");
+          } catch (error) {
+            console.error("Error processing artwork:", error);
+          }
+        }
+        
+        // Add text metadata
+        formData.append("title", extractedMetadata.title || "");
+        formData.append("artist", extractedMetadata.artist || "");
+        formData.append("album", extractedMetadata.album || "");
+        formData.append("year", extractedMetadata.year || "");
+      }
       
       setLogs((prev) => [...prev, "Preparing upload..."]);
       try {
@@ -589,32 +633,14 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
           setLogs((prev) => [...prev, "Server processed file successfully"]);
           
           if (data.status === "success") {
-            // Extract title from filename if not provided
-            let songTitle = data.title;
-            if (!songTitle) {
-              // Try to parse title from filename
-              songTitle = selectedFile.name
-                .replace('.mp3', '')
-                .replace(/_/g, ' ')
-                .replace(/-/g, ' - ');
-            
-              // Check if filename appears to have "Artist - Title" format
-              const hyphenMatch = songTitle.match(/(.+?)\s*-\s*(.+)/);
-              if (hyphenMatch && !data.artist) {
-                // Don't override if artist already provided from metadata
-                songTitle = hyphenMatch[2].trim(); // Use part after hyphen as title
-              }
-            }
-            
-            // Create new beatmap with best-effort metadata
+            // Use extracted metadata if available, otherwise use server response or fallbacks
             const newBeatmap = {
               id: data.id,
-              title: songTitle,
-              artist: data.artist || (songTitle.includes(' - ') ? 
-                songTitle.split(' - ')[0].trim() : "Unknown Artist"),
-              album: data.album || "Unknown Album",
-              year: data.year || new Date().getFullYear().toString(),
-              artwork: data.artwork || null,
+              title: extractedMetadata?.title || data.title || selectedFile.name.replace('.mp3', ''),
+              artist: extractedMetadata?.artist || data.artist || "Unknown Artist",
+              album: extractedMetadata?.album || data.album || "Unknown Album",
+              year: extractedMetadata?.year || data.year || new Date().getFullYear().toString(),
+              artwork: extractedMetadata?.artwork || data.artwork || null,
               createdAt: new Date().toISOString()
             };
             
@@ -641,6 +667,7 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
       } finally {
         setUploading(false);
         setSelectedFile(null);
+        setExtractedMetadata(null);
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { FaUpload, FaMusic, FaImage, FaSpinner } from "react-icons/fa";
-import { parseBlob } from "music-metadata";
+import { extractMP3Metadata } from '../utils/audioMetadata';
 
 function FileUpload({ onSuccess, setLog }) {
   const [mp3, setMp3] = useState(null);
@@ -10,33 +10,46 @@ function FileUpload({ onSuccess, setLog }) {
 
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
+    if (!file) return;
+    
     setMp3(file);
     setLog("Extracting metadata...");
     setLoading(true);
+    
     try {
-      const metadata = await parseBlob(file);
-      const common = metadata.common || {};
-      let artworkUrl = "";
-      if (common.picture && common.picture[0]) {
-        const blob = new Blob([common.picture[0].data], { type: common.picture[0].format });
-        artworkUrl = URL.createObjectURL(blob);
+      console.log("Starting metadata extraction process");
+      const metadata = await extractMP3Metadata(file);
+      
+      console.log("Metadata returned to component:", metadata);
+      
+      // Check if we got any meaningful metadata
+      const hasMetadata = metadata.title || metadata.artist || metadata.album;
+      
+      if (!hasMetadata) {
+        console.log("No meaningful metadata found in the file");
+        setLog("No metadata found in file. Please enter details manually.");
+      } else {
+        setLog("Metadata extracted successfully");
       }
+      
       onSuccess(
         {
-          title: common.title || "",
-          artist: common.artist || "",
-          album: common.album || "",
-          year: common.year || "",
-          artwork: artworkUrl,
+          title: metadata.title || '',
+          artist: metadata.artist || '',
+          album: metadata.album || '',
+          year: metadata.year || '',
+          artwork: metadata.artwork || null,
         },
         file,
         album
       );
     } catch (err) {
-      setLog("Could not extract metadata.");
+      console.error("Component level error handling:", err);
+      setLog("Error extracting metadata. Please enter details manually.");
       onSuccess({ title: "", artist: "", album: "", year: "", artwork: "" }, file, album);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleAlbumChange = (e) => {
