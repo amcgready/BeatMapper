@@ -482,48 +482,113 @@ def update_metadata():
 
 @app.route('/api/download_beatmap/<beatmap_id>', methods=['GET'])
 def download_beatmap(beatmap_id):
-    """Download a beatmap as a ZIP file"""
+    """Download a beatmap with only the required files"""
     try:
-        # Find the beatmap metadata
+        # Check if beatmap exists
         metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
-        beatmap = None
+        if not os.path.exists(metadata_path):
+            return jsonify({'status': 'error', 'message': 'No beatmaps found'}), 404
         
-        if os.path.exists(metadata_path):
-            with open(metadata_path, 'r') as f:
-                beatmaps = json.load(f)
-                
-            # Find the requested beatmap
-            for b in beatmaps:
-                if b['id'] == beatmap_id:
-                    beatmap = b
-                    break
+        with open(metadata_path, 'r') as f:
+            beatmaps = json.load(f)
+        
+        # Find the beatmap
+        beatmap = None
+        for b in beatmaps:
+            if b.get('id') == beatmap_id:
+                beatmap = b
+                break
         
         if not beatmap:
-            return jsonify({'error': 'Beatmap not found'}), 404
+            return jsonify({'status': 'error', 'message': 'Beatmap not found'}), 404
         
-        # Check if the beatmap directory exists
-        beatmap_dir = os.path.join(OUTPUT_DIR, beatmap_id)
-        if not os.path.exists(beatmap_dir):
-            return jsonify({'error': 'Beatmap files not found'}), 404
+        # Create a temporary directory for zip creation
+        temp_dir = os.path.join(OUTPUT_DIR, 'temp', beatmap_id)
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+        os.makedirs(temp_dir, exist_ok=True)
         
-        # Create a ZIP file with the beatmap files
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w') as zipf:
-            for file in os.listdir(beatmap_dir):
-                file_path = os.path.join(beatmap_dir, file)
-                if os.path.isfile(file_path):
-                    zipf.write(file_path, file)
+        # Files to include in the beatmap zip
+        required_files = {
+            'song.ogg': os.path.join(OUTPUT_DIR, f"{beatmap_id}.ogg"),
+            'preview.ogg': os.path.join(OUTPUT_DIR, f"{beatmap_id}_preview.ogg"),
+            'notes.csv': os.path.join(OUTPUT_DIR, f"{beatmap_id}_notes.csv"),
+            'info.csv': os.path.join(OUTPUT_DIR, f"{beatmap_id}_info.csv"),
+            'album.jpg': os.path.join(OUTPUT_DIR, f"{beatmap_id}_artwork.jpg")
+        }
         
-        zip_buffer.seek(0)
+        # Copy required files to temp directory with correct names
+        for target_name, source_path in required_files.items():
+            if os.path.exists(source_path):
+                target_path = os.path.join(temp_dir, target_name)
+                shutil.copyfile(source_path, target_path)
+            else:
+                app.logger.warning(f"File not found: {source_path}")
+                
+                # For missing album artwork, create a placeholder image
+                if target_name == 'album.jpg':
+                    # Create an empty black image as placeholder
+                    from PIL import Image
+                    img = Image.new('RGB', (500, 500), color=(0, 0, 0))
+                    target_path = os.path.join(temp_dir, target_name)
+                    img.save(target_path)
+        
+        # Create a zip file
+        zip_path = os.path.join(OUTPUT_DIR, f"{beatmap_id}_download.zip")
+        with zipfile.ZipFile(zip_path, 'w') as zipf:
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    zipf.write(
+                        file_path, 
+                        arcname=os.path.relpath(file_path, temp_dir)
+                    )
+        
+        # Clean up the temp directory
+        shutil.rmtree(temp_dir)
+        
+        # Return the zip file
         return send_file(
-            zip_buffer,
-            mimetype="application/zip",
+            zip_path,
+            mimetype='application/zip',
             as_attachment=True,
-            download_name=f"{beatmap['title']}_beatmap.zip"
+            download_name=f"{beatmap.get('title', 'beatmap')}.zip"
         )
+    
     except Exception as e:
-        app.logger.error(f"Failed to download beatmap: {e}")
-        return jsonify({'error': 'Failed to download beatmap'}), 500
+        app.logger.error(f"Error creating beatmap download: {str(e)}")
+        return jsonify({'status': 'error', 'message': f'Failed to create beatmap download: {str(e)}'}), 500
+
+@app.route('/api/artwork/<beatmap_id>')
+def get_artwork(beatmap_id):
+    """Serve beatmap artwork"""
+    try:
+        # Try to find artwork file with common extensions
+        extensions = ['.jpg', '.jpeg', '.png', '.gif']
+        found = False
+        
+        # First, check for the standard name
+        artwork_path = os.path.join(OUTPUT_DIR, f"{beatmap_id}_artwork.jpg")
+        if os.path.exists(artwork_path):
+            found = True
+        else:
+            # Try with different extensions
+            for ext in extensions:
+                potential_path = os.path.join(OUTPUT_DIR, f"{beatmap_id}_artwork{ext}")
+                if os.path.exists(potential_path):
+                    artwork_path = potential_path
+                    found = True
+                    break
+        
+        if found:
+            return send_file(artwork_path, mimetype='image/jpeg')
+        else:
+            app.logger.warning(f"No artwork found for beatmap {beatmap_id}")
+            return '', 404
+            
+    except Exception as e:
+        app.logger.error(f"Error serving artwork: {str(e)}")
+        return '', 500
 
 # Call at startup
 if __name__ == '__main__':

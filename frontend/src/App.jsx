@@ -58,12 +58,15 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {
     setIsSaving(true);
     
     try {
+      console.log("Saving metadata:", metadata);
+      console.log("Album art present:", albumArt ? "Yes" : "No");
+      
       const formData = new FormData();
       formData.append("id", beatmap.id);
       formData.append("title", metadata.title);
       formData.append("artist", metadata.artist);
-      formData.append("year", metadata.year);
       formData.append("album", metadata.album);
+      formData.append("year", metadata.year);
       
       if (albumArt) {
         formData.append("albumArt", albumArt);
@@ -76,20 +79,32 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {
       });
       
       if (!response.ok) {
-        throw new Error("Failed to update metadata");
+        const errorData = await response.text();
+        console.error("Server error on update_metadata:", errorData);
+        throw new Error(`Failed to update metadata: ${response.status}`);
       }
       
-      // Call the onSave callback with updated metadata
-      onSave({
-        ...beatmap,
-        ...metadata,
-        artwork: albumArtPreview,
-      });
+      const result = await response.json();
+      console.log("Server response:", result);
       
-      onClose();
+      if (result.status === "success") {
+        // Call the onSave callback with updated metadata
+        const updatedBeatmap = {
+          ...beatmap,
+          ...metadata,
+          // If we have a new artwork preview from user upload, use it
+          // Otherwise keep the existing artwork
+          artwork: albumArtPreview || beatmap.artwork
+        };
+        
+        onSave(updatedBeatmap);
+        onClose();
+      } else {
+        throw new Error(result.message || "Unknown error updating metadata");
+      }
     } catch (error) {
       console.error("Error updating metadata:", error);
-      alert("Failed to update metadata. Please try again.");
+      alert("Failed to update metadata: " + error.message);
     } finally {
       setIsSaving(false);
     }
@@ -568,19 +583,42 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
     setLogs((prev) => [...prev, "Extracting metadata from file..."]);
     try {
       const metadata = await extractMP3Metadata(file);
-      setLogs((prev) => [...prev, 
-        `Metadata extracted:`,
-        `- Title: ${metadata.title || 'Not found'}`,
-        `- Artist: ${metadata.artist || 'Not found'}`,
-        `- Album: ${metadata.album || 'Not found'}`,
-        `- Year: ${metadata.year || 'Not found'}`,
-        `- Artwork: ${metadata.artwork ? 'Found' : 'Not found'}`
+      
+      // Log the extraction results
+      const foundItems = [];
+      if (metadata.title) foundItems.push("Title");
+      if (metadata.artist) foundItems.push("Artist");
+      if (metadata.album) foundItems.push("Album");
+      if (metadata.year) foundItems.push("Year");
+      if (metadata.artwork) foundItems.push("Artwork");
+      
+      setLogs((prev) => [
+        ...prev, 
+        `Metadata extraction ${foundItems.length > 0 ? "successful" : "found nothing"}!`,
+        foundItems.length > 0 ? `Found: ${foundItems.join(", ")}` : "",
+        `Title: ${metadata.title || "(not found)"}`,
+        `Artist: ${metadata.artist || "(not found)"}`,
+        `Album: ${metadata.album || "(not found)"}`,
+        `Year: ${metadata.year || "(not found)"}`,
+        `Artwork: ${metadata.artwork ? "Found" : "Not found"}`
       ]);
+      
       setExtractedMetadata(metadata);
     } catch (error) {
       console.error("Error extracting metadata:", error);
       setLogs((prev) => [...prev, `Error extracting metadata: ${error.message}`]);
-      setExtractedMetadata(null);
+      
+      // Still create a basic metadata object with filename as title
+      const fallbackMetadata = {
+        title: file.name.replace(/\.[^/.]+$/, ""), // Remove extension
+        artist: "",
+        album: "",
+        year: null,
+        artwork: null
+      };
+      
+      setExtractedMetadata(fallbackMetadata);
+      setLogs((prev) => [...prev, "Using filename as fallback title"]);
     }
   };
 
@@ -856,6 +894,28 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
                       >
                         <FaPencilAlt className="mr-1" /> Edit
                       </button>
+                      <button 
+                        onClick={async () => {
+                          try {
+                            setLogs(prev => [...prev, `Downloading beatmap: ${beatmap.title}...`]);
+                            const response = await fetch(`/api/download_beatmap/${beatmap.id}`);
+                            
+                            if (!response.ok) {
+                              throw new Error(`Download failed with status: ${response.status}`);
+                            }
+                            
+                            const blob = await response.blob();
+                            saveAs(blob, `${beatmap.title || 'beatmap'}.zip`);
+                            setLogs(prev => [...prev, `Beatmap downloaded successfully: ${beatmap.title}`]);
+                          } catch (error) {
+                            console.error("Error downloading beatmap:", error);
+                            setLogs(prev => [...prev, `Failed to download beatmap: ${error.message}`]);
+                          }
+                        }}
+                        className="bg-green-600 hover:bg-green-700 text-white py-1 px-3 rounded text-sm flex items-center"
+                      >
+                        <FaDownload className="mr-1" /> Download
+                      </button>
                       <button
                         onClick={() => onDelete(beatmap.id)}
                         className="bg-red-600 hover:bg-red-700 text-white py-1 px-3 rounded text-sm flex items-center"
@@ -885,88 +945,50 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
 // --- Main App with Routing ---
 export default function App() {
   const [beatmaps, setBeatmaps] = useState(() => {
-    // Load beatmaps from localStorage on startup
+    // Load beatmaps from localStorage on app start
     const savedBeatmaps = localStorage.getItem("beatmaps");
     return savedBeatmaps ? JSON.parse(savedBeatmaps) : [];
   });
-  
-  const [logs, setLogs] = useState(["Ready."]);
+  const [logs, setLogs] = useState(() => {
+    // Load logs from localStorage on app start
+    const savedLogs = localStorage.getItem("logs");
+    return savedLogs ? JSON.parse(savedLogs) : [];
+  });
 
-  // Save beatmaps to localStorage whenever they change
+  // Sync beatmaps with localStorage
   useEffect(() => {
     localStorage.setItem("beatmaps", JSON.stringify(beatmaps));
   }, [beatmaps]);
 
-  // Fetch existing beatmaps from server on load
+  // Sync logs with localStorage
   useEffect(() => {
-    const fetchBeatmaps = async () => {
-      try {
-        const response = await fetch("/api/beatmaps");
-        if (response.ok) {
-          const data = await response.json();
-          setBeatmaps(data.beatmaps);
-        }
-      } catch (error) {
-        console.error("Failed to fetch beatmaps:", error);
-        // If server fetch fails, we'll still have local storage as backup
-      }
-    };
+    localStorage.setItem("logs", JSON.stringify(logs));
+  }, [logs]);
 
-    fetchBeatmaps();
-  }, []);
-
-  const handleDeleteBeatmap = async (id) => {
-    try {
-      setLogs(prev => [...prev, `Deleting beatmap ID: ${id}...`]);
-      
-      // Send delete request to server with explicit instruction to delete files
-      const response = await fetch(`/api/beatmap/${id}`, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ deleteFiles: true })
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Server responded with status ${response.status}: ${errorText}`);
-      }
-      
-      // Update local state
-      setBeatmaps(prev => prev.filter(b => b.id !== id));
-      setLogs(prev => [...prev, `Successfully deleted beatmap ID: ${id} and associated files`]);
-    } catch (error) {
-      console.error("Failed to delete beatmap:", error);
-      setLogs(prev => [...prev, `Failed to delete beatmap: ${error.message}`]);
-    }
+  const handleDelete = (id) => {
+    setBeatmaps((prev) => prev.filter((b) => b.id !== id));
+    setLogs((prev) => [...prev, `Deleted beatmap with id: ${id}`]);
   };
 
   return (
     <Router>
       <Routes>
-        <Route
-          path="/"
-          element={
-            <Home
-              beatmaps={beatmaps}
-              setBeatmaps={setBeatmaps}
-              logs={logs}
-              setLogs={setLogs}
-              onDelete={handleDeleteBeatmap}
-            />
-          }
-        />
-        <Route
-          path="/beatmap/:id"
-          element={
-            <BeatmapDetails
-              beatmaps={beatmaps}
-              setBeatmaps={setBeatmaps}
-              onDelete={handleDeleteBeatmap}
-            />
-          }
-        />
+        <Route path="/" element={
+          <Home 
+            beatmaps={beatmaps} 
+            setBeatmaps={setBeatmaps} 
+            logs={logs} 
+            setLogs={setLogs} 
+            onDelete={handleDelete} 
+          />
+        } />
+        <Route path="/beatmap/:id" element={
+          <BeatmapDetails 
+            beatmaps={beatmaps} 
+            setBeatmaps={setBeatmaps} 
+            onDelete={handleDelete} 
+          />
+        } />
       </Routes>
     </Router>
   );
