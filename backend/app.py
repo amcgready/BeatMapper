@@ -495,62 +495,68 @@ def clear_all_beatmaps():
         if os.path.exists(OUTPUT_DIR):
             items_before = os.listdir(OUTPUT_DIR)
             app.logger.info(f"Items in output directory before clearing: {items_before}")
-        else:
-            app.logger.warning(f"Output directory does not exist: {OUTPUT_DIR}")
-            items_before = []
-        
-        # Get all items in output directory
-        items_deleted = 0
-        deletion_errors = []
-        
-        if os.path.exists(OUTPUT_DIR):
-            for item in os.listdir(OUTPUT_DIR):
+            deleted_count = 0
+            errors = []
+            
+            # First, identify all folders in the output directory that look like beatmap folders
+            # (We're using UUID format which should all be proper beatmap folders)
+            for item in items_before:
                 item_path = os.path.join(OUTPUT_DIR, item)
-                app.logger.info(f"Processing item: {item} at path: {item_path}")
                 
-                # Skip beatmaps.json, we'll reset it separately
+                # Skip beatmaps.json file - we'll reset this separately
                 if item == 'beatmaps.json':
                     app.logger.info(f"Skipping beatmaps.json file")
                     continue
                 
                 try:
-                    if os.path.isfile(item_path):
-                        app.logger.info(f"Deleting file: {item_path}")
-                        os.unlink(item_path)
-                        app.logger.info(f"Successfully deleted file: {item_path}")
-                        items_deleted += 1
-                    elif os.path.isdir(item_path):
-                        app.logger.info(f"Deleting directory: {item_path}")
+                    # If it's a directory and looks like a UUID (beatmap folder)
+                    if os.path.isdir(item_path) and (
+                        # Check if it looks like a UUID (8-4-4-4-12 format)
+                        (len(item) == 36 and item.count('-') == 4) or
+                        # Or other beatmap folders that might start with temp_
+                        item.startswith('temp_')
+                    ):
+                        app.logger.info(f"Removing beatmap directory: {item_path}")
                         shutil.rmtree(item_path)
-                        app.logger.info(f"Successfully deleted directory: {item_path}")
-                        items_deleted += 1
-                    else:
-                        app.logger.warning(f"Unknown item type: {item_path}")
+                        app.logger.info(f"Successfully removed directory: {item_path}")
+                        deleted_count += 1
+                    # Or if it's just a file in the output folder (except beatmaps.json)
+                    elif os.path.isfile(item_path):
+                        app.logger.info(f"Removing file: {item_path}")
+                        os.unlink(item_path)
+                        app.logger.info(f"Successfully removed file: {item_path}")
+                        deleted_count += 1
                 except Exception as e:
-                    error_msg = f"Error deleting {item_path}: {e}"
+                    error_msg = f"Error deleting {item_path}: {str(e)}"
                     app.logger.error(error_msg, exc_info=True)
-                    deletion_errors.append(error_msg)
+                    errors.append(error_msg)
             
-            # Reset the beatmaps.json file
+            # Reset the beatmaps.json file to an empty array
+            beatmaps_json_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
             try:
-                beatmaps_json_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
-                app.logger.info(f"Resetting beatmaps.json at {beatmaps_json_path}")
-                
                 with open(beatmaps_json_path, 'w') as f:
                     json.dump([], f)
                 app.logger.info("Reset beatmaps.json to empty array")
             except Exception as e:
-                error_msg = f"Error resetting beatmaps.json: {e}"
+                error_msg = f"Error resetting beatmaps.json: {str(e)}"
                 app.logger.error(error_msg, exc_info=True)
-                deletion_errors.append(error_msg)
+                errors.append(error_msg)
             
-            # List items after deletion for verification
+            # Verify everything was removed correctly
             remaining_items = os.listdir(OUTPUT_DIR)
-            app.logger.info(f"Items in output directory after clearing: {remaining_items}")
+            app.logger.info(f"Items remaining in output directory: {remaining_items}")
             
-            app.logger.info(f"Successfully deleted {items_deleted} items from output directory")
-            if deletion_errors:
-                app.logger.warning(f"Encountered {len(deletion_errors)} errors during deletion")
+            if len(remaining_items) > 1 or (len(remaining_items) == 1 and remaining_items[0] != 'beatmaps.json'):
+                unexpected_items = [i for i in remaining_items if i != 'beatmaps.json']
+                warning = f"Unexpected items still remain in output directory: {unexpected_items}"
+                app.logger.warning(warning)
+            
+            return jsonify({
+                "status": "success",
+                "message": f"Cleared all beatmaps ({deleted_count} items deleted)",
+                "itemsDeleted": deleted_count,
+                "errors": errors if errors else None
+            })
         else:
             app.logger.warning(f"Output directory not found: {OUTPUT_DIR}")
             os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -563,16 +569,14 @@ def clear_all_beatmaps():
                 app.logger.info("Created empty beatmaps.json")
             except Exception as e:
                 app.logger.error(f"Error creating empty beatmaps.json: {e}")
-        
-        return jsonify({
-            "status": "success",
-            "message": f"Cleared all beatmaps ({items_deleted} items deleted)",
-            "itemsDeleted": items_deleted,
-            "errors": deletion_errors if deletion_errors else None
-        })
-        
+            
+            return jsonify({
+                "status": "success",
+                "message": "Output directory was empty or missing, created fresh directory",
+                "itemsDeleted": 0
+            })
     except Exception as e:
-        app.logger.error(f"Error in clear_all_beatmaps: {e}", exc_info=True)
+        app.logger.error(f"Error in clear_all_beatmaps: {str(e)}", exc_info=True)
         return jsonify({
             "status": "error",
             "message": f"Failed to clear beatmaps: {str(e)}"
