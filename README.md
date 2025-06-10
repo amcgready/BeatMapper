@@ -62,8 +62,8 @@ start.bat
 ```
 
 ### On macOS/Linux/WSL
-``` bash 
-start.sh
+``` sh
+bash start.sh
 ```
 
 ### Or start processes individually
