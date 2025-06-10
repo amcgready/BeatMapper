@@ -57,10 +57,14 @@ bash installer.sh
 ### 3. **Start the Application**
 
 ### On Windows
-'''sh start.bat'''
+```sh
+start.bat
+```
 
 ### On macOS/Linux/WSL
-'''bash start.sh'''
+``` bash 
+start.sh
+```
 
 ### Or start processes individually
 
