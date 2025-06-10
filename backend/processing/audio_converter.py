@@ -1,26 +1,42 @@
-from pydub import AudioSegment
-import logging
+"""
+Audio conversion utilities for BeatMapper application.
+"""
 import os
+import logging
+from pydub import AudioSegment
 
-logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def mp3_to_ogg(mp3_path, ogg_path):
+def mp3_to_ogg(input_path, output_path):
     """
-    Converts an MP3 file to OGG format.
+    Convert an MP3 file to OGG format
+    
     Args:
-        mp3_path (str): Path to the input MP3 file.
-        ogg_path (str): Path to save the output OGG file.
+        input_path: Path to MP3 file
+        output_path: Path to save OGG file
+    
     Returns:
-        bool: True if conversion was successful, False otherwise.
+        bool: True if successful, False otherwise
     """
     try:
-        if not os.path.exists(mp3_path):
-            logging.error(f"Input MP3 file does not exist: {mp3_path}")
-            return False
-        audio = AudioSegment.from_mp3(mp3_path)
-        audio.export(ogg_path, format="ogg")
-        logging.info(f"Converted {mp3_path} to {ogg_path}")
+        logger.info(f"Converting MP3 to OGG: {input_path} -> {output_path}")
+        
+        if not os.path.exists(input_path):
+            logger.error(f"Input file does not exist: {input_path}")
+            raise FileNotFoundError(f"MP3 file not found at {input_path}")
+        
+        # Make sure output directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        # Load audio file using pydub
+        audio = AudioSegment.from_mp3(input_path)
+        logger.info(f"MP3 loaded: {len(audio)/1000}s duration")
+        
+        # Export as OGG
+        audio.export(output_path, format="ogg")
+        logger.info(f"OGG file saved to {output_path}")
+        
         return True
     except Exception as e:
-        logging.error(f"Failed to convert {mp3_path} to OGG: {e}")
-        return False
+        logger.error(f"Error converting MP3 to OGG: {e}", exc_info=True)
+        raise

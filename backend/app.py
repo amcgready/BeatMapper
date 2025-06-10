@@ -3,12 +3,13 @@ import json
 import time
 import uuid
 import shutil
-import tempfile
-import csv
 import logging
-import sqlite3
-import warnings
-from flask import Flask, request, jsonify, send_file
+import sys
+import traceback
+import tempfile
+from datetime import datetime
+import csv
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 from processing.audio_converter import mp3_to_ogg
 from processing.preview_generator import generate_preview
@@ -16,15 +17,26 @@ from processing.notes_generator import generate_notes_csv
 from processing.info_generator import generate_info_csv
 from flask_cors import CORS
 
-log_file = os.path.join(os.path.dirname(__file__), 'beatmapper.log')
+# Set up logging with absolute path
+log_file = os.path.abspath(os.path.join(os.path.dirname(__file__), 'beatmapper.log'))
+print(f"Setting up logging to file: {log_file}")  # Print to console to verify path
+
+# Make sure the directory exists
+os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
+# Configure logging with both file and console output
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Set to DEBUG for maximum verbosity during troubleshooting
     format='%(asctime)s %(levelname)s %(name)s %(message)s',
     handlers=[
-        logging.FileHandler(log_file, encoding='utf-8'),
-        logging.StreamHandler()
+        logging.FileHandler(log_file, encoding='utf-8', mode='a'),
+        logging.StreamHandler(sys.stdout)
     ]
 )
+
+# Add a test log message
+logger = logging.getLogger(__name__)
+logger.info("Logging initialized")
 
 app = Flask(__name__)
 CORS(app)
@@ -35,11 +47,12 @@ OUTPUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../output'
 TEMPLATE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates/notes_template.xlsx'))
 
 def cleanup_output_dir(days=7):
+    """Clean up old temporary files"""
     now = time.time()
     cutoff = now - days * 86400
     for filename in os.listdir(OUTPUT_DIR):
         file_path = os.path.join(OUTPUT_DIR, filename)
-        if os.path.isfile(file_path):
+        if os.path.isfile(file_path) and ('temp_' in filename or filename.endswith('.zip')):
             if os.path.getmtime(file_path) < cutoff:
                 try:
                     os.remove(file_path)
@@ -61,507 +74,211 @@ def health():
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
     """Handle MP3 upload and beatmap generation"""
+    temp_dir = None
+    beatmap_dir = None
+    
     try:
-        app.logger.info("Upload endpoint called")
+        logger.info("Upload endpoint called")
+        logger.info(f"Request data: {request.form.keys()}")  # Log form data keys
         
         # Check if file was included in the request
         if 'file' not in request.files:
-            app.logger.error("No file part in request")
+            logger.error("No file part in request")
             return jsonify({"status": "error", "error": "No file part"}), 400
             
         file = request.files['file']
+        logger.info(f"Received file: {file.filename}")
+        
         if file.filename == '':
-            app.logger.error("No selected file")
+            logger.error("No selected file")
             return jsonify({"status": "error", "error": "No selected file"}), 400
-            
-        if file and file.filename.endswith('.mp3'):
-            # Generate a unique ID for this beatmap
-            beatmap_id = str(uuid.uuid4())
-            
-            # Create output directory if it doesn't exist
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-            
-            # Create a directory for this beatmap
-            beatmap_dir = os.path.join(OUTPUT_DIR, beatmap_id)
-            os.makedirs(beatmap_dir, exist_ok=True)
-            
-            # Create a temp directory for processing
-            temp_dir = os.path.join(OUTPUT_DIR, f"temp_{beatmap_id}")
-            os.makedirs(temp_dir, exist_ok=True)
-            
-            try:
-                # First save the MP3 file to temp directory
-                mp3_path = os.path.join(temp_dir, 'song.mp3')
-                file.save(mp3_path)
-                app.logger.info(f"MP3 saved to temp directory: {mp3_path}")
-                
-                # Extract metadata from the form
-                title = request.form.get('title', '')
-                artist = request.form.get('artist', '')
-                album = request.form.get('album', '')
-                year = request.form.get('year', '')
-                
-                # Process album art if provided
-                artwork_path = os.path.join(beatmap_dir, 'album.jpg')
-                if 'artwork' in request.files and request.files['artwork'].filename:
-                    try:
-                        artwork = request.files['artwork']
-                        artwork.save(artwork_path)
-                        app.logger.info(f"Artwork saved to {artwork_path}")
-                    except Exception as e:
-                        app.logger.error(f"Failed to save artwork: {e}")
-                        # Create a simple placeholder album art
-                        try:
-                            from PIL import Image
-                            img = Image.new('RGB', (500, 500), color=(73, 109, 137))
-                            img.save(artwork_path)
-                            app.logger.info("Created placeholder album art")
-                        except Exception as e:
-                            app.logger.error(f"Failed to create placeholder artwork: {e}")
-                
-                # Convert MP3 to OGG and save directly to beatmap directory
-                ogg_path = os.path.join(beatmap_dir, 'song.ogg')
-                try:
-                    mp3_to_ogg(mp3_path, ogg_path)
-                    app.logger.info(f"Converted MP3 to OGG: {ogg_path}")
-                except Exception as e:
-                    app.logger.error(f"Failed to convert MP3 to OGG: {e}")
-                    return jsonify({"status": "error", "error": f"Failed to convert MP3 to OGG: {str(e)}"}), 500
-                
-                # Generate preview OGG
-                preview_path = os.path.join(beatmap_dir, 'preview.ogg')
-                try:
-                    generate_preview(ogg_path, preview_path)
-                    app.logger.info(f"Generated preview OGG: {preview_path}")
-                except Exception as e:
-                    app.logger.error(f"Failed to generate preview: {e}")
-                    return jsonify({"status": "error", "error": f"Failed to generate preview: {str(e)}"}), 500
-                
-                # Generate notes.csv
-                notes_path = os.path.join(beatmap_dir, 'notes.csv')
-                try:
-                    generate_notes_csv(mp3_path, None, notes_path)
-                    app.logger.info(f"Generated notes.csv: {notes_path}")
-                except Exception as e:
-                    app.logger.error(f"Failed to generate notes.csv: {e}")
-                    return jsonify({"status": "error", "error": f"Failed to generate notes.csv: {str(e)}"}), 500
-                
-                # Generate info.csv with metadata
-                info_path = os.path.join(beatmap_dir, 'info.csv')
-                song_metadata = {
-                    "title": title or os.path.splitext(file.filename)[0],
-                    "artist": artist or "Unknown Artist",
-                    "album": album or "Unknown Album",
-                    "year": year or str(datetime.now().year)
-                }
-                
-                try:
-                    generate_info_csv(song_metadata, info_path)
-                    app.logger.info(f"Generated info.csv: {info_path}")
-                except Exception as e:
-                    app.logger.error(f"Failed to generate info.csv: {e}")
-                    return jsonify({"status": "error", "error": f"Failed to generate info.csv: {str(e)}"}), 500
-                
-                # Verify all required files exist
-                required_files = [
-                    'song.ogg',
-                    'preview.ogg',
-                    'info.csv',
-                    'notes.csv',
-                    'album.jpg'
-                ]
-                
-                missing_files = []
-                for req_file in required_files:
-                    if not os.path.exists(os.path.join(beatmap_dir, req_file)):
-                        missing_files.append(req_file)
-                        app.logger.warning(f"Missing required file: {req_file}")
-                
-                # Create any missing files with placeholders
-                if missing_files:
-                    app.logger.warning(f"Creating placeholders for missing files: {missing_files}")
-                    
-                    if 'album.jpg' in missing_files:
-                        try:
-                            from PIL import Image
-                            img = Image.new('RGB', (500, 500), color=(73, 109, 137))
-                            img.save(os.path.join(beatmap_dir, 'album.jpg'))
-                            app.logger.info("Created placeholder album art")
-                        except Exception as e:
-                            app.logger.error(f"Failed to create placeholder artwork: {e}")
-                
-                # Create a beatmap entry for tracking
-                beatmap = {
-                    "id": beatmap_id,
-                    "title": song_metadata["title"],
-                    "artist": song_metadata["artist"],
-                    "album": song_metadata["album"],
-                    "year": song_metadata["year"],
-                    "createdAt": datetime.now().isoformat()
-                }
-                
-                # Add to beatmaps.json
-                beatmaps_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
-                beatmaps = []
-                if os.path.exists(beatmaps_path):
-                    try:
-                        with open(beatmaps_path, 'r') as f:
-                            beatmaps = json.load(f)
-                    except json.JSONDecodeError:
-                        app.logger.warning("Could not parse beatmaps.json, starting with empty list")
-                
-                beatmaps.append(beatmap)
-                
-                with open(beatmaps_path, 'w') as f:
-                    json.dump(beatmaps, f)
-                
-                # Clean up temp directory
-                try:
-                    shutil.rmtree(temp_dir)
-                    app.logger.info(f"Cleaned up temp directory: {temp_dir}")
-                except Exception as e:
-                    app.logger.warning(f"Failed to clean up temp directory: {e}")
-                
-                # Verify final output directory has only required files
-                final_files = os.listdir(beatmap_dir)
-                
-                for f in final_files:
-                    if f not in required_files:
-                        try:
-                            file_path = os.path.join(beatmap_dir, f)
-                            if os.path.isfile(file_path):
-                                os.remove(file_path)
-                                app.logger.info(f"Removed unnecessary file: {f}")
-                            elif os.path.isdir(file_path):
-                                shutil.rmtree(file_path)
-                                app.logger.info(f"Removed unnecessary directory: {f}")
-                        except Exception as e:
-                            app.logger.warning(f"Failed to remove unnecessary file {f}: {e}")
-                
-                app.logger.info(f"Successfully created beatmap: {beatmap_id}")
-                return jsonify({
-                    "status": "success",
-                    "id": beatmap_id,
-                    "title": song_metadata["title"],
-                    "artist": song_metadata["artist"],
-                    "album": song_metadata["album"],
-                    "year": song_metadata["year"]
-                })
-                
-            except Exception as e:
-                app.logger.error(f"Error processing beatmap: {e}", exc_info=True)
-                
-                # Clean up in case of error
-                try:
-                    if os.path.exists(temp_dir):
-                        shutil.rmtree(temp_dir)
-                    
-                    if os.path.exists(beatmap_dir):
-                        shutil.rmtree(beatmap_dir)
-                except Exception as cleanup_error:
-                    app.logger.error(f"Error during cleanup: {cleanup_error}")
-                    
-                return jsonify({"status": "error", "error": str(e)}), 500
-                
-        else:
-            app.logger.error("Invalid file format, must be MP3")
+        
+        # Check file extension
+        if not file.filename.lower().endswith('.mp3'):
+            logger.error(f"Invalid file format: {file.filename}")
             return jsonify({"status": "error", "error": "Invalid file format, must be MP3"}), 400
             
-    except Exception as e:
-        app.logger.error(f"Upload failed: {e}", exc_info=True)
-        return jsonify({"status": "error", "error": str(e)}), 500
-
-@app.route('/api/upload_notes', methods=['POST'])
-def upload_notes():
-    try:
-        if 'file' not in request.files:
-            app.logger.warning("No notes.csv uploaded in request.")
-            return jsonify({'error': 'No file uploaded'}), 400
-        file = request.files['file']
-        filename = secure_filename(file.filename)
-        if not filename.lower().endswith('.csv'):
-            app.logger.warning(f"Rejected notes file with invalid extension: {filename}")
-            return jsonify({'error': 'Only CSV files are supported'}), 400
-        notes_path = os.path.join(OUTPUT_DIR, 'notes.csv')
-        file.save(notes_path)
-        app.logger.info("notes.csv updated by user upload.")
-        return jsonify({'status': 'notes.csv updated'})
-    except Exception as e:
-        app.logger.error(f"Unexpected error in upload_notes: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-@app.route('/api/upload_artwork', methods=['POST'])
-def upload_artwork():
-    try:
-        if 'file' not in request.files:
-            app.logger.warning("No artwork uploaded in request.")
-            return jsonify({'error': 'No file uploaded'}), 400
-            
-        file = request.files['file']
-        filename = secure_filename(file.filename)
-        if not filename.lower().endswith(('.jpg', '.jpeg', '.png')):
-            app.logger.warning(f"Rejected artwork file with invalid extension: {filename}")
-            return jsonify({'error': 'Only JPG and PNG files are supported'}), 400
-            
-        album_path = os.path.join(OUTPUT_DIR, 'album.jpg')
-        file.save(album_path)
-        app.logger.info("Album artwork updated by user upload.")
+        # Generate a unique ID for this beatmap
+        beatmap_id = str(uuid.uuid4())
+        logger.info(f"Generated beatmap ID: {beatmap_id}")
         
-        return jsonify({'status': 'Album artwork updated'})
-    except Exception as e:
-        app.logger.error(f"Unexpected error in upload_artwork: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-@app.route('/api/download/<filename>')
-def download(filename):
-    try:
-        safe_filename = secure_filename(filename)
-        file_path = os.path.join(OUTPUT_DIR, safe_filename)
-        if not os.path.exists(file_path):
-            app.logger.warning(f"Requested file does not exist: {safe_filename}")
-            return jsonify({'error': 'File not found'}), 404
-        return send_from_directory(OUTPUT_DIR, safe_filename, as_attachment=True)
-    except Exception as e:
-        app.logger.error(f"Unexpected error in download: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-@app.route('/api/beatmaps', methods=['GET'])
-def get_beatmaps():
-    """Get all beatmaps in the output directory"""
-    try:
-        beatmaps = []
-        # Check for a metadata file that stores beatmap info
-        metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
+        # Create output directory if it doesn't exist
+        if not os.path.exists(OUTPUT_DIR):
+            logger.info(f"Creating output directory: {OUTPUT_DIR}")
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
         
-        if os.path.exists(metadata_path):
-            with open(metadata_path, 'r') as f:
-                beatmaps = json.load(f)
+        # Create a directory for this beatmap
+        beatmap_dir = os.path.join(OUTPUT_DIR, beatmap_id)
+        logger.info(f"Creating beatmap directory: {beatmap_dir}")
+        os.makedirs(beatmap_dir, exist_ok=True)
         
-        return jsonify({'beatmaps': beatmaps})
-    except Exception as e:
-        app.logger.error(f"Failed to get beatmaps: {e}")
-        return jsonify({'error': 'Failed to get beatmaps'}), 500
-
-@app.route('/api/beatmap/<beatmap_id>', methods=['DELETE'])
-def delete_beatmap(beatmap_id):
-    """Delete a beatmap and its associated files"""
-    try:
-        # Parse request data if available
-        request_data = request.get_json() if request.is_json else {}
-        delete_files = request_data.get('deleteFiles', True)  # Default to true
+        # Create a temp directory for processing
+        temp_dir = os.path.join(OUTPUT_DIR, f"temp_{beatmap_id}")
+        logger.info(f"Creating temp directory: {temp_dir}")
+        os.makedirs(temp_dir, exist_ok=True)
         
-        app.logger.info(f"Deleting beatmap {beatmap_id}, delete_files={delete_files}")
+        # First save the MP3 file to temp directory
+        mp3_path = os.path.join(temp_dir, 'song.mp3')
+        logger.info(f"Saving MP3 to: {mp3_path}")
+        file.save(mp3_path)
+        logger.info(f"MP3 saved successfully: {os.path.getsize(mp3_path)} bytes")
         
-        # Get metadata file path
-        metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
-        beatmaps = []
+        # Extract metadata from the form
+        title = request.form.get('title', '')
+        artist = request.form.get('artist', '')
+        album = request.form.get('album', '')
+        year = request.form.get('year', '')
+        logger.info(f"Metadata from request: title='{title}', artist='{artist}', album='{album}', year='{year}'")
         
-        if os.path.exists(metadata_path):
-            with open(metadata_path, 'r') as f:
-                beatmaps = json.load(f)
+        # Process album art if provided
+        artwork_path = os.path.join(beatmap_dir, 'album.jpg')
+        if 'artwork' in request.files and request.files['artwork'].filename:
+            try:
+                artwork_file = request.files['artwork']
+                logger.info(f"Saving artwork: {artwork_file.filename}")
+                artwork_file.save(artwork_path)
+                logger.info(f"Artwork saved to {artwork_path}")
+            except Exception as e:
+                logger.error(f"Failed to save artwork: {e}", exc_info=True)
+                # Create default artwork
+                create_default_artwork(artwork_path)
+        else:
+            logger.info("No artwork provided, creating default")
+            create_default_artwork(artwork_path)
         
-        # Find the beatmap to be deleted
-        beatmap_to_delete = None
-        updated_beatmaps = []
-        
-        for beatmap in beatmaps:
-            if beatmap.get('id') == beatmap_id:
-                beatmap_to_delete = beatmap
-            else:
-                updated_beatmaps.append(beatmap)
-        
-        if not beatmap_to_delete:
-            app.logger.warning(f"Beatmap {beatmap_id} not found for deletion")
-            return jsonify({'status': 'error', 'message': 'Beatmap not found'}), 404
-        
-        # Update the metadata file
-        with open(metadata_path, 'w') as f:
-            json.dump(updated_beatmaps, f)
-        
-        # Delete associated files if requested
-        deleted_files = []
-        
-        if delete_files:
-            # Delete beatmap directory if it exists
-            beatmap_dir = os.path.join(OUTPUT_DIR, beatmap_id)
-            if os.path.exists(beatmap_dir) and os.path.isdir(beatmap_dir):
-                shutil.rmtree(beatmap_dir)
-                deleted_files.append(f"Directory: {beatmap_id}")
-            
-            # Delete individual files
-            file_patterns = [
-                f"{beatmap_id}.mp3",
-                f"{beatmap_id}.ogg",
-                f"{beatmap_id}_artwork.jpg",
-                f"{beatmap_id}_beatmap.zip",
-                # Add any other file patterns associated with beatmaps
-            ]
-            
-            for pattern in file_patterns:
-                file_path = os.path.join(OUTPUT_DIR, pattern)
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                    deleted_files.append(f"File: {pattern}")
-        
-        app.logger.info(f"Deleted beatmap {beatmap_id} and {len(deleted_files)} associated files")
-        return jsonify({
-            'status': 'success', 
-            'message': 'Beatmap deleted',
-            'deleted_files': deleted_files
-        })
-    
-    except Exception as e:
-        app.logger.error(f"Error deleting beatmap {beatmap_id}: {str(e)}")
-        return jsonify({
-            'status': 'error', 
-            'message': f'Failed to delete beatmap: {str(e)}'
-        }), 500
-
-
-@app.route('/api/clear_beatmaps', methods=['POST'])
-def clear_beatmaps():
-    """Clear all beatmaps and associated files"""
-    try:
-        # Parse request data if available
-        request_data = request.get_json() if request.is_json else {}
-        delete_files = request_data.get('deleteFiles', True)  # Default to true
-        
-        app.logger.info(f"Clearing all beatmaps, delete_files={delete_files}")
-        
-        # Get metadata file path
-        metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
-        
-        # Save empty beatmaps list
-        with open(metadata_path, 'w') as f:
-            json.dump([], f)
-        
-        deleted_items = []
-        
-        # Delete files if requested
-        if delete_files:
-            # Create a list to store files/directories to preserve
-            preserve = ['beatmaps.json', '.gitkeep']
-            
-            for item in os.listdir(OUTPUT_DIR):
-                if item in preserve:
-                    continue
-                    
-                item_path = os.path.join(OUTPUT_DIR, item)
-                try:
-                    if os.path.isdir(item_path):
-                        shutil.rmtree(item_path)
-                        deleted_items.append(f"Directory: {item}")
-                    else:
-                        os.remove(item_path)
-                        deleted_items.append(f"File: {item}")
-                except Exception as e:
-                    app.logger.error(f"Error deleting {item_path}: {str(e)}")
-        
-        app.logger.info(f"Cleared all beatmaps and {len(deleted_items)} associated files")
-        return jsonify({
-            'status': 'success', 
-            'message': 'All beatmaps cleared',
-            'deleted_items': deleted_items
-        })
-    
-    except Exception as e:
-        app.logger.error(f"Error clearing beatmaps: {str(e)}")
-        return jsonify({
-            'status': 'error', 
-            'message': f'Failed to clear beatmaps: {str(e)}'
-        }), 500
-
-@app.route('/api/update_metadata', methods=['POST'])
-def update_metadata():
-    """Update beatmap metadata using the JSON file system"""
-    try:
-        app.logger.info("Update metadata endpoint called")
-        
-        # Get data from JSON request
-        data = request.get_json()
-        if not data:
-            return jsonify({"status": "error", "message": "No JSON data received"}), 400
-            
-        beatmap_id = data.get('id')
-        if not beatmap_id:
-            return jsonify({"status": "error", "message": "Missing beatmap ID"}), 400
-            
-        title = data.get('title', '')
-        artist = data.get('artist', '')
-        album = data.get('album', '')
-        year = data.get('year', '')
-        
-        app.logger.info(f"Updating metadata for beatmap: {beatmap_id}")
-        app.logger.info(f"New metadata: title='{title}', artist='{artist}', album='{album}', year='{year}'")
-        
-        # Update the metadata in the JSON file
+        # Convert MP3 to OGG and save directly to beatmap directory
+        ogg_path = os.path.join(beatmap_dir, 'song.ogg')
         try:
-            # Read existing beatmaps
-            metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
+            logger.info(f"Converting MP3 to OGG: {mp3_path} -> {ogg_path}")
+            mp3_to_ogg(mp3_path, ogg_path)
+            logger.info(f"Converted to OGG: {os.path.getsize(ogg_path)} bytes")
+        except Exception as e:
+            logger.error(f"Failed to convert MP3 to OGG: {e}", exc_info=True)
+            return jsonify({"status": "error", "error": f"Failed to convert MP3 to OGG: {str(e)}"}), 500
+        
+        # Generate preview OGG
+        preview_path = os.path.join(beatmap_dir, 'preview.ogg')
+        try:
+            logger.info(f"Generating preview OGG: {preview_path}")
+            generate_preview(ogg_path, preview_path)
+            logger.info(f"Preview generated: {os.path.getsize(preview_path)} bytes")
+        except Exception as e:
+            logger.error(f"Failed to generate preview: {e}", exc_info=True)
+            return jsonify({"status": "error", "error": f"Failed to generate preview: {str(e)}"}), 500
+        
+        # Generate notes.csv
+        notes_path = os.path.join(beatmap_dir, 'notes.csv')
+        try:
+            logger.info(f"Generating notes.csv: {notes_path}")
+            generate_notes_csv(mp3_path, None, notes_path)
+            logger.info(f"Notes CSV generated: {os.path.getsize(notes_path)} bytes")
+        except Exception as e:
+            logger.error(f"Failed to generate notes.csv: {e}", exc_info=True)
+            return jsonify({"status": "error", "error": f"Failed to generate notes.csv: {str(e)}"}), 500
+        
+        # Generate info.csv with metadata
+        info_path = os.path.join(beatmap_dir, 'info.csv')
+        song_metadata = {
+            "title": title or os.path.splitext(file.filename)[0],
+            "artist": artist or "Unknown Artist",
+            "album": album or "Unknown Album",
+            "year": year or str(datetime.now().year)
+        }
+        
+        try:
+            logger.info(f"Generating info.csv: {info_path}")
+            generate_info_csv(song_metadata, info_path)
+            logger.info(f"Info CSV generated: {os.path.getsize(info_path)} bytes")
+        except Exception as e:
+            logger.error(f"Failed to generate info.csv: {e}", exc_info=True)
+            return jsonify({"status": "error", "error": f"Failed to generate info.csv: {str(e)}"}), 500
+        
+        # Add to beatmaps.json
+        beatmaps_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
+        beatmap = {
+            "id": beatmap_id,
+            "title": song_metadata["title"],
+            "artist": song_metadata["artist"],
+            "album": song_metadata["album"],
+            "year": song_metadata["year"],
+            "createdAt": datetime.now().isoformat()
+        }
+        
+        # Add to beatmaps.json
+        try:
+            logger.info(f"Updating beatmaps.json: {beatmaps_path}")
             beatmaps = []
+            if os.path.exists(beatmaps_path):
+                try:
+                    with open(beatmaps_path, 'r') as f:
+                        beatmaps = json.load(f)
+                except json.JSONDecodeError:
+                    logger.warning("Could not parse beatmaps.json, starting with empty list")
             
-            if os.path.exists(metadata_path):
-                with open(metadata_path, 'r') as f:
-                    beatmaps = json.load(f)
+            beatmaps.append(beatmap)
             
-            # Find and update the beatmap
-            found = False
-            for beatmap in beatmaps:
-                if beatmap.get('id') == beatmap_id:
-                    beatmap['title'] = title
-                    beatmap['artist'] = artist
-                    beatmap['album'] = album
-                    beatmap['year'] = year
-                    found = True
-                    break
-            
-            if not found:
-                app.logger.error(f"Beatmap {beatmap_id} not found")
-                return jsonify({
-                    "status": "error",
-                    "message": f"Beatmap with ID {beatmap_id} not found"
-                }), 404
-            
-            # Save updated metadata
-            with open(metadata_path, 'w') as f:
+            with open(beatmaps_path, 'w') as f:
                 json.dump(beatmaps, f)
+                
+            logger.info(f"Successfully updated beatmaps.json")
+        except Exception as e:
+            logger.error(f"Failed to update beatmaps.json: {e}", exc_info=True)
+            # Continue anyway since the beatmap files are created
             
-            app.logger.info(f"Metadata updated successfully for beatmap {beatmap_id}")
-            
-            # Update info.csv file in beatmap directory if it exists
-            beatmap_dir = os.path.join(OUTPUT_DIR, beatmap_id)
-            info_path = os.path.join(beatmap_dir, 'info.csv')
-            
-            if os.path.exists(beatmap_dir) and os.path.exists(info_path):
-                app.logger.info(f"Updating info.csv for beatmap {beatmap_id}")
-                # Update the info.csv file
-                song_metadata = {
-                    "title": title,
-                    "artist": artist,
-                    "album": album,
-                    "year": year
-                }
-                generate_info_csv(song_metadata, info_path)
-            
-            return jsonify({
-                "status": "success",
-                "message": "Metadata updated successfully"
-            })
-            
-        except Exception as file_error:
-            app.logger.error(f"File error: {str(file_error)}", exc_info=True)
-            return jsonify({
-                "status": "error",
-                "message": f"File error: {str(file_error)}"
-            }), 500
-            
-    except Exception as e:
-        app.logger.error(f"Error in update_metadata: {str(e)}", exc_info=True)
+        # Clean up temp directory
+        try:
+            logger.info(f"Cleaning up temp directory: {temp_dir}")
+            shutil.rmtree(temp_dir)
+            logger.info(f"Temp directory removed")
+        except Exception as e:
+            logger.warning(f"Failed to clean up temp directory: {e}")
+        
+        logger.info(f"Successfully created beatmap: {beatmap_id}")
         return jsonify({
-            "status": "error",
-            "message": str(e)
+            "status": "success",
+            "id": beatmap_id,
+            "title": song_metadata["title"],
+            "artist": song_metadata["artist"],
+            "album": song_metadata["album"],
+            "year": song_metadata["year"]
+        })
+                
+    except Exception as e:
+        logger.error(f"Unexpected error in upload_file: {e}", exc_info=True)
+        error_traceback = traceback.format_exc()
+        logger.error(f"Traceback: {error_traceback}")
+        
+        # Clean up in case of error
+        try:
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+                logger.info(f"Cleaned up temp directory after error: {temp_dir}")
+            
+            if beatmap_dir and os.path.exists(beatmap_dir):
+                shutil.rmtree(beatmap_dir)
+                logger.info(f"Cleaned up beatmap directory after error: {beatmap_dir}")
+        except Exception as cleanup_error:
+            logger.error(f"Error during cleanup: {cleanup_error}")
+            
+        return jsonify({
+            "status": "error", 
+            "error": str(e),
+            "traceback": error_traceback
         }), 500
-    
+
+
+# Helper function for default artwork
+def create_default_artwork(artwork_path):
+    try:
+        from PIL import Image
+        logger.info("Creating default artwork")
+        img = Image.new('RGB', (500, 500), color=(73, 109, 137))
+        img.save(artwork_path)
+        logger.info(f"Default artwork created: {artwork_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to create default artwork: {e}", exc_info=True)
+        return False
 
 @app.route('/api/download_beatmap/<beatmap_id>', methods=['GET'])
 def download_beatmap(beatmap_id):
@@ -608,70 +325,64 @@ def download_beatmap(beatmap_id):
                 
                 # Create placeholder files for missing files
                 if filename == "notes.csv":
-                    try:
-                        with open(dest_path, 'w', newline='') as f:
-                            writer = csv.writer(f)
-                            writer.writerow(["Time", "Lane", "Type", "Length", "Volume", "Pitch", "Effect"])
-                            # Generate a simple pattern for 60 seconds
-                            for i in range(60):
-                                # Basic pattern: kick, snare, hihat
-                                if i % 2 == 0:
-                                    writer.writerow([f"{i}.000", "1", "Hit", "0", "100", "Kick", "None"])
-                                    writer.writerow([f"{i}.000", "3", "Hit", "0", "85", "HiHat", "None"])
-                                else:
-                                    writer.writerow([f"{i}.000", "2", "Hit", "0", "100", "Snare", "None"])
-                                    writer.writerow([f"{i}.000", "3", "Hit", "0", "85", "HiHat", "None"])
-                                writer.writerow([f"{i}.500", "3", "Hit", "0", "85", "HiHat", "None"])
-                    except Exception as e:
-                        app.logger.error(f"Error creating notes.csv: {str(e)}")
+                    with open(dest_path, 'w', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(["Time", "Lane", "Type", "Length", "Volume", "Pitch", "Effect"])
+                        # Generate a simple pattern for 60 seconds
+                        for i in range(60):
+                            # Basic pattern: kick, snare, hihat
+                            if i % 2 == 0:
+                                writer.writerow([f"{i}.000", "1", "Hit", "0", "100", "Kick", "None"])
+                                writer.writerow([f"{i}.000", "3", "Hit", "0", "85", "HiHat", "None"])
+                            else:
+                                writer.writerow([f"{i}.000", "2", "Hit", "0", "100", "Snare", "None"])
+                                writer.writerow([f"{i}.000", "3", "Hit", "0", "85", "HiHat", "None"])
+                            writer.writerow([f"{i}.500", "3", "Hit", "0", "85", "HiHat", "None"])
                 
                 elif filename == "info.csv":
-                    try:
-                        # Try to get metadata from beatmaps.json
-                        metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
-                        title = "Unknown"
-                        artist = "Unknown"
-                        album = "Unknown"
-                        year = ""
-                        
-                        if os.path.exists(metadata_path):
-                            try:
-                                with open(metadata_path, 'r') as f:
-                                    beatmaps = json.load(f)
-                                    for bm in beatmaps:
-                                        if bm.get("id") == beatmap_id:
-                                            title = bm.get("title", "Unknown")
-                                            artist = bm.get("artist", "Unknown")
-                                            album = bm.get("album", "Unknown")
-                                            year = bm.get("year", "")
-                                            break
-                            except Exception as e:
-                                app.logger.error(f"Error reading metadata: {str(e)}")
-                        
-                        with open(dest_path, 'w', newline='') as f:
-                            writer = csv.writer(f)
-                            writer.writerow(["Title", "Artist", "Album", "Year"])
-                            writer.writerow([title, artist, album, year])
-                    except Exception as e:
-                        app.logger.error(f"Error creating info.csv: {str(e)}")
+                    # Try to get metadata from beatmaps.json
+                    metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
+                    title = "Unknown"
+                    artist = "Unknown"
+                    album = "Unknown"
+                    year = ""
+                    
+                    if os.path.exists(metadata_path):
+                        try:
+                            with open(metadata_path, 'r') as f:
+                                beatmaps = json.load(f)
+                                for bm in beatmaps:
+                                    if bm.get("id") == beatmap_id:
+                                        title = bm.get("title", "Unknown")
+                                        artist = bm.get("artist", "Unknown")
+                                        album = bm.get("album", "Unknown")
+                                        year = bm.get("year", "")
+                                        break
+                        except Exception as e:
+                            app.logger.error(f"Error reading metadata: {str(e)}")
+                    
+                    with open(dest_path, 'w', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(["Title", "Artist", "Album", "Year"])
+                        writer.writerow([title, artist, album, year])
                 
                 elif filename == "album.jpg":
                     try:
-                        # Create a simple placeholder album art
                         from PIL import Image
                         img = Image.new('RGB', (500, 500), color=(73, 109, 137))
                         img.save(dest_path)
-                        app.logger.info(f"Created placeholder album art at {dest_path}")
+                        app.logger.info(f"Created placeholder album art")
                     except Exception as e:
-                        app.logger.error(f"Error creating album.jpg: {str(e)}")
+                        app.logger.error(f"Error creating placeholder album art: {str(e)}")
                 
                 elif filename == "preview.ogg" and os.path.exists(os.path.join(beatmap_dir, "song.ogg")):
                     try:
-                        # Try to create preview from song file
                         from processing.preview_generator import generate_preview
-                        song_path = os.path.join(beatmap_dir, "song.ogg")
-                        generate_preview(song_path, dest_path)
-                        app.logger.info(f"Generated preview.ogg from song.ogg")
+                        generate_preview(
+                            os.path.join(beatmap_dir, "song.ogg"),
+                            dest_path
+                        )
+                        app.logger.info(f"Generated missing preview.ogg")
                     except Exception as e:
                         app.logger.error(f"Error generating preview.ogg: {str(e)}")
         
@@ -732,9 +443,8 @@ def download_beatmap(beatmap_id):
             @response.call_on_close
             def cleanup_zip():
                 try:
-                    if os.path.exists(zip_path):
-                        os.remove(zip_path)
-                        app.logger.info(f"Cleaned up zip file: {zip_path}")
+                    os.remove(zip_path)
+                    app.logger.info(f"Cleaned up zip file: {zip_path}")
                 except Exception as e:
                     app.logger.error(f"Error cleaning up zip file: {str(e)}")
             
@@ -756,36 +466,185 @@ def download_beatmap(beatmap_id):
             except Exception as e:
                 app.logger.error(f"Error cleaning up temp directory: {str(e)}")
 
-@app.route('/api/artwork/<beatmap_id>')
-def get_artwork(beatmap_id):
-    """Serve beatmap artwork"""
+@app.route('/api/clear_all_beatmaps', methods=['DELETE'])
+def clear_all_beatmaps():
+    """Delete all beatmaps and reset the application state"""
     try:
-        # Try to find artwork file with common extensions
-        extensions = ['.jpg', '.jpeg', '.png', '.gif']
-        found = False
+        app.logger.info("Clearing all beatmaps")
         
-        # First, check for the standard name
-        artwork_path = os.path.join(OUTPUT_DIR, f"{beatmap_id}_artwork.jpg")
-        if os.path.exists(artwork_path):
-            found = True
-        else:
-            # Try with different extensions
-            for ext in extensions:
-                potential_path = os.path.join(OUTPUT_DIR, f"{beatmap_id}_artwork{ext}")
-                if os.path.exists(potential_path):
-                    artwork_path = potential_path
-                    found = True
-                    break
+        # Get all items in output directory
+        items_deleted = 0
         
-        if found:
-            return send_file(artwork_path, mimetype='image/jpeg')
-        else:
-            app.logger.warning(f"No artwork found for beatmap {beatmap_id}")
-            return '', 404
+        if os.path.exists(OUTPUT_DIR):
+            for item in os.listdir(OUTPUT_DIR):
+                item_path = os.path.join(OUTPUT_DIR, item)
+                
+                # Skip beatmaps.json, we'll reset it separately
+                if item == 'beatmaps.json':
+                    continue
+                
+                try:
+                    if os.path.isfile(item_path):
+                        os.unlink(item_path)
+                        app.logger.info(f"Deleted file: {item_path}")
+                        items_deleted += 1
+                    elif os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+                        app.logger.info(f"Deleted directory: {item_path}")
+                        items_deleted += 1
+                except Exception as e:
+                    app.logger.error(f"Error deleting {item_path}: {e}")
             
+            # Reset the beatmaps.json file
+            try:
+                with open(os.path.join(OUTPUT_DIR, 'beatmaps.json'), 'w') as f:
+                    json.dump([], f)
+                app.logger.info("Reset beatmaps.json to empty array")
+            except Exception as e:
+                app.logger.error(f"Error resetting beatmaps.json: {e}")
+                
+            app.logger.info(f"Successfully deleted {items_deleted} items from output directory")
+        else:
+            app.logger.warning(f"Output directory not found: {OUTPUT_DIR}")
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            app.logger.info(f"Created output directory: {OUTPUT_DIR}")
+            
+            # Create empty beatmaps.json
+            try:
+                with open(os.path.join(OUTPUT_DIR, 'beatmaps.json'), 'w') as f:
+                    json.dump([], f)
+                app.logger.info("Created empty beatmaps.json")
+            except Exception as e:
+                app.logger.error(f"Error creating empty beatmaps.json: {e}")
+        
+        return jsonify({
+            "status": "success",
+            "message": f"Cleared all beatmaps ({items_deleted} items deleted)",
+            "itemsDeleted": items_deleted
+        })
+        
     except Exception as e:
-        app.logger.error(f"Error serving artwork: {str(e)}")
-        return '', 500
+        app.logger.error(f"Error in clear_all_beatmaps: {e}", exc_info=True)
+        return jsonify({
+            "status": "error",
+            "message": f"Failed to clear beatmaps: {str(e)}"
+        }), 500
+
+@app.route('/api/update_beatmap/<beatmap_id>', methods=['PUT'])
+def update_beatmap(beatmap_id):
+    """Update beatmap metadata"""
+    try:
+        logger.info(f"Update requested for beatmap: {beatmap_id}")
+        logger.info(f"Request data: {request.json}")
+        
+        # Get updated metadata from request
+        data = request.json
+        
+        if not data:
+            logger.error("No data provided in request")
+            return jsonify({"status": "error", "error": "No data provided"}), 400
+            
+        # Required fields
+        title = data.get('title')
+        artist = data.get('artist')
+        album = data.get('album')
+        year = data.get('year')
+        
+        if not all([title, artist]):
+            logger.error("Missing required metadata fields")
+            return jsonify({"status": "error", "error": "Title and artist are required"}), 400
+        
+        # Path to beatmap directory
+        beatmap_dir = os.path.join(OUTPUT_DIR, beatmap_id)
+        
+        # Check if beatmap exists
+        if not os.path.exists(beatmap_dir):
+            logger.error(f"Beatmap directory not found: {beatmap_dir}")
+            return jsonify({"status": "error", "error": "Beatmap not found"}), 404
+            
+        # Update info.csv
+        info_path = os.path.join(beatmap_dir, 'info.csv')
+        try:
+            logger.info(f"Updating info.csv: {info_path}")
+            
+            # Create updated metadata dictionary
+            song_metadata = {
+                "title": title,
+                "artist": artist,
+                "album": album or "Unknown Album",
+                "year": year or ""
+            }
+            
+            # Generate/update info.csv file
+            generate_info_csv(song_metadata, info_path)
+            logger.info(f"Updated info.csv")
+        except Exception as e:
+            logger.error(f"Failed to update info.csv: {e}", exc_info=True)
+            return jsonify({"status": "error", "error": f"Failed to update info.csv: {str(e)}"}), 500
+            
+        # Update beatmaps.json
+        beatmaps_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
+        try:
+            logger.info(f"Updating beatmap in beatmaps.json")
+            
+            # Read current beatmaps data
+            beatmaps = []
+            if os.path.exists(beatmaps_path):
+                try:
+                    with open(beatmaps_path, 'r') as f:
+                        beatmaps = json.load(f)
+                except json.JSONDecodeError:
+                    logger.warning("Could not parse beatmaps.json, starting with empty list")
+            
+            # Find and update the specified beatmap
+            updated = False
+            for i, beatmap in enumerate(beatmaps):
+                if beatmap.get('id') == beatmap_id:
+                    # Update fields
+                    beatmaps[i]['title'] = title
+                    beatmaps[i]['artist'] = artist
+                    beatmaps[i]['album'] = album or beatmap.get('album', "Unknown Album")
+                    beatmaps[i]['year'] = year or beatmap.get('year', "")
+                    beatmaps[i]['updatedAt'] = datetime.now().isoformat()
+                    updated = True
+                    break
+            
+            if not updated:
+                logger.warning(f"Beatmap {beatmap_id} not found in beatmaps.json")
+                # Add it as a new entry
+                beatmaps.append({
+                    "id": beatmap_id,
+                    "title": title,
+                    "artist": artist,
+                    "album": album or "Unknown Album",
+                    "year": year or "",
+                    "createdAt": datetime.now().isoformat(),
+                    "updatedAt": datetime.now().isoformat()
+                })
+            
+            # Save updated beatmaps data
+            with open(beatmaps_path, 'w') as f:
+                json.dump(beatmaps, f)
+                
+            logger.info(f"Successfully updated beatmap in beatmaps.json")
+            
+            # Return the updated beatmap data
+            return jsonify({
+                "status": "success",
+                "id": beatmap_id,
+                "title": title,
+                "artist": artist,
+                "album": album or "Unknown Album",
+                "year": year or ""
+            })
+            
+        except Exception as e:
+            logger.error(f"Failed to update beatmaps.json: {e}", exc_info=True)
+            return jsonify({"status": "error", "error": f"Failed to update metadata: {str(e)}"}), 500
+        
+    except Exception as e:
+        logger.error(f"Error in update_beatmap: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": f"Server error: {str(e)}"}), 500
 
 # Call at startup
 if __name__ == '__main__':

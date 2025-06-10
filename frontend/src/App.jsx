@@ -58,24 +58,18 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {
     setIsSaving(true);
     
     try {
-      // Prepare payload as JSON
-      const payload = {
-        id: beatmap.id,
-        title: metadata.title || "",
-        artist: metadata.artist || "",
-        album: metadata.album || "",
-        year: metadata.year || ""
-      };
-      
-      console.log("Sending payload:", payload);
-      
-      // Send as JSON
-      const response = await fetch("/api/update_metadata", {
-        method: "POST",
+      // Use the correct endpoint with beatmap ID in the URL
+      const response = await fetch(`/api/update_beatmap/${beatmap.id}`, {
+        method: "PUT",  // Match the backend's expected method
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          title: metadata.title || "",
+          artist: metadata.artist || "",
+          album: metadata.album || "",
+          year: metadata.year || ""
+        })
       });
       
       if (!response.ok) {
@@ -374,18 +368,19 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
     setUploadingMetadata(true);
     
     try {
-      // Create a FormData object instead of sending JSON
-      const formData = new FormData();
-      formData.append("id", beatmap.id);
-      formData.append("title", editFields.title);
-      formData.append("artist", editFields.artist);
-      formData.append("album", editFields.album);
-      formData.append("year", editFields.year);
-      
-      // Send updated metadata to backend using FormData
-      const response = await fetch("/api/update_metadata", {
-        method: "POST",
-        body: formData,
+      // Use the correct endpoint with beatmap ID in the URL
+      const response = await fetch(`/api/update_beatmap/${beatmap.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          id: beatmap.id,
+          title: editFields.title,
+          artist: editFields.artist,
+          album: editFields.album,
+          year: editFields.year
+        })
       });
 
       if (!response.ok) {
@@ -731,45 +726,36 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
   };
 
   const handleClearBeatmaps = async () => {
-    if (!window.confirm("Are you sure you want to clear all beatmaps? This will delete all files from the server. This action cannot be undone.")) {
+    if (!window.confirm("Are you sure you want to delete ALL beatmaps? This will remove all files from the output folder.")) {
       return;
     }
     
+    setLogs(prev => [...prev, "Clearing all beatmaps..."]);
+    
     try {
-      setLogs((prev) => [...prev, "Clearing all beatmaps and associated files..."]);
-      
-      const response = await fetch("/api/clear_beatmaps", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ deleteFiles: true })
+      // Call the backend endpoint to delete all beatmaps and files
+      const response = await fetch("/api/clear_all_beatmaps", {
+        method: "DELETE",
       });
       
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Server responded with status ${response.status}: ${errorText}`);
+        console.error("Clear all beatmaps error:", errorText);
+        throw new Error(`Failed to clear beatmaps: ${response.status}`);
       }
       
-      const data = await response.json();
+      const result = await response.json();
       
-      // Log details of deleted files if available
-      if (data.deleted_items && data.deleted_items.length > 0) {
-        setLogs((prev) => [
-          ...prev, 
-          `Successfully cleared ${data.deleted_items.length} items from server:`,
-          ...data.deleted_items.slice(0, 10).map(item => `- ${item}`),
-          data.deleted_items.length > 10 ? `... and ${data.deleted_items.length - 10} more items` : ""
-        ].filter(Boolean));
-      } else {
-        setLogs((prev) => [...prev, "All beatmaps and files cleared from server"]);
-      }
-      
-      // Update local state
+      // Update UI state
       setBeatmaps([]);
+      setLogs(prev => [...prev, 
+        `All beatmaps cleared successfully. ${result.itemsDeleted || 'All'} items deleted.`,
+        "Output folder has been cleaned."
+      ]);
+      
     } catch (error) {
       console.error("Error clearing beatmaps:", error);
-      setLogs((prev) => [...prev, `Failed to clear beatmaps: ${error.message}`]);
+      setLogs(prev => [...prev, `Error clearing beatmaps: ${error.message}`]);
     }
   };
 
