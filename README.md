@@ -5,17 +5,19 @@
 # 🥁 BeatMapper
 
 **BeatMapper** is a modern tool for converting MP3s into playable Drums Rock songs with a beautiful web interface.  
-It uses advanced audio processing and machine learning to generate accurate drum charts, audio previews, and all required files for Drums Rock custom songs.
+It uses audio processing and AI models to generate drum charts, audio previews, and all required files for Drums Rock custom songs.
 
 ---
 
 ## 🚀 Features
 
 - 🎵 **MP3 to Drums Rock**: Upload your MP3 and get a ready-to-play Drums Rock song package.
-- 🥁 **AI Drum Detection**: Uses state-of-the-art models for drum note extraction.
-- 🎚️ **Manual Correction**: Download, edit, and re-upload notes for perfect accuracy.
-- 🎧 **Audio Preview**: Listen to the full song and preview clip in the browser.
-- 📦 **Modern UI**: Fast, responsive, and easy to use.
+- 🧠 **AI-Powered Chart Generation**: Uses machine learning models to analyze audio and create appropriate drum charts.
+- 🎧 **Audio Preview**: Generate preview clips automatically.
+- 🎚️ **Metadata Extraction**: Automatically extracts song title, artist, album, and album artwork from your MP3 files.
+- 📦 **Modern UI**: Fast, responsive React-based interface.
+- 🔄 **Edit Metadata**: Customize song information before finalizing your beatmaps.
+- 💾 **Download Ready**: Get complete ZIP packages with all required files.
 
 ---
 
@@ -25,6 +27,7 @@ It uses advanced audio processing and machine learning to generate accurate drum
 - **Node.js 18+ & npm**
 - **FFmpeg** (required for audio processing)
 - **Git** (recommended)
+- **~500MB disk space** (for AI models)
 
 ---
 
@@ -51,14 +54,24 @@ installer.bat
 bash installer.sh
 ```
 
-### 3. **Start the Backend**
+### 3. **Start the Application**
+
+### On Windows
+'''sh start.bat'''
+
+### On macOS/Linux/WSL
+'''bash start.sh'''
+
+### Or start processes individually
+
+### Start the Backend
 
 ```sh
 cd backend
 python app.py
 ```
 
-### 4. **Start the Frontend**
+### Start the Frontend
 
 ```sh
 cd frontend
@@ -72,12 +85,16 @@ npm run dev
 
 ## 🛠️ Usage
 
-1. **Upload your MP3** (and optional album art).
-2. **Fill in song metadata** (title, artist, etc.).
-3. **Set BPM/quantization** (or use auto-detect).
-4. **Download generated files**: notes.csv, song.ogg, preview.ogg, info.csv, album.jpg.
-5. **(Optional) Manual Correction**: Download and edit notes.csv, then re-upload for perfect accuracy.
-6. **Import into Drums Rock** and play!
+1. **Upload your MP3** (artwork will be extracted if available).
+2. **Review extracted metadata** (title, artist, album, year).
+3. **Customize metadata** if needed using the Edit function.
+4. **Download the beatmap package** containing:
+   - notes.csv (drum chart)
+   - song.ogg (audio file)
+   - preview.ogg (short preview clip)
+   - info.csv (song metadata)
+   - album.jpg (artwork)
+5. **Import into Drums Rock** and play!
 
 ---
 
@@ -88,9 +105,10 @@ BeatMapper/
 │
 ├── backend/         # Python Flask API & processing
 │   ├── processing/  # Audio, notes, info generators
+│   ├── models/      # AI models for beat detection
 │   └── app.py       # Main backend server
 │
-├── frontend/        # React + Vite + Tailwind UI
+├── frontend/        # React + Vite
 │   ├── src/         # React components
 │   └── public/      # Static files
 │
@@ -102,12 +120,42 @@ BeatMapper/
 
 ---
 
+## 🤖 AI Models
+
+BeatMapper uses several AI models for audio processing:
+
+- **Beat Detection Model**: Identifies downbeats and rhythm patterns
+- **Drum Part Separation Model**: Isolates drum parts from mixed audio
+- **Pattern Recognition Model**: Detects common drum patterns and fills
+- **Difficulty Estimator**: Estimates appropriate difficulty levels
+
+On first run, these models will be downloaded automatically (~300MB). They are cached for subsequent use.
+
+---
+
 ## 📝 Notes
 
 - **FFmpeg** must be installed and available in your system PATH for audio processing.
 - All generated files are saved in the `output/` directory.
 - For local use only; no authentication required.
+- It's recommended to "Clear All" beatmaps after importing to Drums Rock to free up disk space.
 - For best results, use high-quality MP3s with clear drum tracks.
+- AI processing may take 1-3 minutes depending on song length and complexity.
+
+---
+
+## ⚠️ Error Handling
+
+BeatMapper includes comprehensive logging and error reporting:
+
+- Check the `beatmapper.log` file in the backend directory for detailed server logs.
+- The UI displays user-friendly error messages when issues occur.
+- If you encounter problems, check common issues:
+  - FFmpeg not installed or not in PATH
+  - Insufficient disk space
+  - Invalid or corrupted MP3 files
+  - Network issues between frontend and backend
+  - AI model download failures
 
 ---
 
@@ -124,15 +172,13 @@ MIT License
 
 ---
 
-## 🥁 Multi-process Drum Recognition Pipeline
+## 🛠️ API Endpoints
 
-BeatMapper uses a sophisticated multi-process pipeline for accurate drum recognition:
-
-1. **Spleeter Separation**: The audio is first processed by Spleeter, which runs in its own virtual environment and subprocess. Spleeter separates the audio into different stems, allowing for isolated drum track analysis.
-2. **Librosa Onset Detection**: The separated drum track is then analyzed using Librosa's onset detection in a Python process. This step detects the precise moments when each drum hit occurs.
-3. **(Optional) Madmom Onset Detection**: As an option, Madmom's onset detection can be used in another Python process for comparison or improved accuracy.
-
-This pipeline ensures that drum hits are detected with high precision, providing an excellent basis for the generated drum charts.
+- `GET /api/health` - Check if server is running
+- `POST /api/upload` - Upload MP3 and generate beatmap
+- `GET /api/download_beatmap/<beatmap_id>` - Download a beatmap ZIP
+- `PUT /api/update_beatmap/<beatmap_id>` - Update beatmap metadata
+- `DELETE /api/clear_all_beatmaps` - Delete all beatmaps and reset
 
 ---
 
