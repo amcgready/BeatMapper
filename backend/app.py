@@ -489,40 +489,68 @@ def download_beatmap(beatmap_id):
 def clear_all_beatmaps():
     """Delete all beatmaps and reset the application state"""
     try:
-        app.logger.info("Clearing all beatmaps")
+        app.logger.info(f"Clearing all beatmaps from directory: {OUTPUT_DIR}")
+        
+        # List all items before deletion for debugging
+        if os.path.exists(OUTPUT_DIR):
+            items_before = os.listdir(OUTPUT_DIR)
+            app.logger.info(f"Items in output directory before clearing: {items_before}")
+        else:
+            app.logger.warning(f"Output directory does not exist: {OUTPUT_DIR}")
+            items_before = []
         
         # Get all items in output directory
         items_deleted = 0
+        deletion_errors = []
         
         if os.path.exists(OUTPUT_DIR):
             for item in os.listdir(OUTPUT_DIR):
                 item_path = os.path.join(OUTPUT_DIR, item)
+                app.logger.info(f"Processing item: {item} at path: {item_path}")
                 
                 # Skip beatmaps.json, we'll reset it separately
                 if item == 'beatmaps.json':
+                    app.logger.info(f"Skipping beatmaps.json file")
                     continue
                 
                 try:
                     if os.path.isfile(item_path):
+                        app.logger.info(f"Deleting file: {item_path}")
                         os.unlink(item_path)
-                        app.logger.info(f"Deleted file: {item_path}")
+                        app.logger.info(f"Successfully deleted file: {item_path}")
                         items_deleted += 1
                     elif os.path.isdir(item_path):
+                        app.logger.info(f"Deleting directory: {item_path}")
                         shutil.rmtree(item_path)
-                        app.logger.info(f"Deleted directory: {item_path}")
+                        app.logger.info(f"Successfully deleted directory: {item_path}")
                         items_deleted += 1
+                    else:
+                        app.logger.warning(f"Unknown item type: {item_path}")
                 except Exception as e:
-                    app.logger.error(f"Error deleting {item_path}: {e}")
+                    error_msg = f"Error deleting {item_path}: {e}"
+                    app.logger.error(error_msg, exc_info=True)
+                    deletion_errors.append(error_msg)
             
             # Reset the beatmaps.json file
             try:
-                with open(os.path.join(OUTPUT_DIR, 'beatmaps.json'), 'w') as f:
+                beatmaps_json_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
+                app.logger.info(f"Resetting beatmaps.json at {beatmaps_json_path}")
+                
+                with open(beatmaps_json_path, 'w') as f:
                     json.dump([], f)
                 app.logger.info("Reset beatmaps.json to empty array")
             except Exception as e:
-                app.logger.error(f"Error resetting beatmaps.json: {e}")
-                
+                error_msg = f"Error resetting beatmaps.json: {e}"
+                app.logger.error(error_msg, exc_info=True)
+                deletion_errors.append(error_msg)
+            
+            # List items after deletion for verification
+            remaining_items = os.listdir(OUTPUT_DIR)
+            app.logger.info(f"Items in output directory after clearing: {remaining_items}")
+            
             app.logger.info(f"Successfully deleted {items_deleted} items from output directory")
+            if deletion_errors:
+                app.logger.warning(f"Encountered {len(deletion_errors)} errors during deletion")
         else:
             app.logger.warning(f"Output directory not found: {OUTPUT_DIR}")
             os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -539,7 +567,8 @@ def clear_all_beatmaps():
         return jsonify({
             "status": "success",
             "message": f"Cleared all beatmaps ({items_deleted} items deleted)",
-            "itemsDeleted": items_deleted
+            "itemsDeleted": items_deleted,
+            "errors": deletion_errors if deletion_errors else None
         })
         
     except Exception as e:
