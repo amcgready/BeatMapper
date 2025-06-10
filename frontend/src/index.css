@@ -26,7 +26,7 @@ body, html, #root {
 .bm-logo {
   width: 180px;
   height: 180px;
-  margin-top: 230px; /* Increased from 80px to 120px for even more space */
+  margin-top: 285px;
   margin-bottom: 32px;
   border-radius: 50%;
   border: 2px solid #ffd600;
