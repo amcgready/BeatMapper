@@ -835,14 +835,29 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
             textAlign: "left"
           }}>
             <h2 className="text-xl font-bold" style={{ textAlign: "left" }}>Your Beatmaps</h2>
-            {beatmaps.length > 0 && (
-              <button
-                onClick={handleClearBeatmaps}
-                className="bg-red-600 hover:bg-red-700 text-white py-1 px-3 rounded"
-              >
-                <FaTrash className="inline mr-1" /> Clear All
-              </button>
-            )}
+            
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              {beatmaps.length > 0 && (
+                <>
+                  <div style={{ 
+                    backgroundColor: "#374151", 
+                    padding: "8px 12px", 
+                    borderRadius: "4px",
+                    fontSize: "0.875rem", 
+                    color: "#fbbf24", 
+                    maxWidth: "300px" 
+                  }}>
+                    <strong>NOTE:</strong> It is recommended to 'Clear All' after importing to Drums Rock
+                  </div>
+                  <button
+                    onClick={handleClearBeatmaps}
+                    className="bg-red-600 hover:bg-red-700 text-white py-1 px-3 rounded whitespace-nowrap"
+                  >
+                    <FaTrash className="inline mr-1" /> Clear All
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           {beatmaps.length === 0 ? (
@@ -889,7 +904,7 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
                       <div style={{ color: "#9ca3af" }}>{beatmap.artist}</div>
                     </div>
                     
-                    {/* Buttons */}
+                    {/* Buttons - REMOVE THE DELETE BUTTON */}
                     <div style={{ display: "flex", gap: "0.75rem" }}>
                       <button
                         onClick={() => {
@@ -921,12 +936,6 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
                         className="bg-green-600 hover:bg-green-700 text-white py-1 px-3 rounded text-sm flex items-center"
                       >
                         <FaDownload className="mr-1" /> Download
-                      </button>
-                      <button
-                        onClick={() => onDelete(beatmap.id)}
-                        className="bg-red-600 hover:bg-red-700 text-white py-1 px-3 rounded text-sm flex items-center"
-                      >
-                        <FaTrash className="mr-1" /> Delete
                       </button>
                     </div>
                   </div>
