@@ -1,13 +1,12 @@
 import os
 import csv
 import logging
-from openpyxl import load_workbook
-
-logging.basicConfig(level=logging.INFO)
+import random
 
 def generate_notes_csv(song_path, template_path, output_path):
     """
-    Generate a notes.csv file in the correct Drums Rock format.
+    Generate a notes.csv file in the exact format Drums Rock expects.
+    Based on the enemyData CSV format from the template.
     
     Args:
         song_path: Path to the audio file
@@ -17,41 +16,46 @@ def generate_notes_csv(song_path, template_path, output_path):
     try:
         logging.info(f"Generating Drums Rock-compatible notes for {os.path.basename(song_path)}")
         
-        # Create a basic pattern with Drums Rock-compatible format
+        # Determine song duration (ideally from audio file, but using a default for now)
+        song_duration = 180.0  # 3 minutes in seconds
+        
+        # Create the notes.csv file with the exact format from the enemyData template
         with open(output_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            # Header row
-            writer.writerow(["Time", "Lane", "Type", "Length", "Volume", "Pitch", "Effect"])
             
-            # Generate a basic rock beat pattern (4/4 time signature)
-            # Using Drums Rock lane numbering:
-            # Lane 0: Kick drum (was Lane 1)
-            # Lane 1: Snare drum (was Lane 2)
-            # Lane 2: Hi-hat/Cymbal (was Lane 3)
-            # Lane 3: Tom/Crash (was Lane 4)
+            # Header row - exactly as in the template
+            writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
             
-            # Generate pattern for 30 measures
-            for measure in range(30):
-                base_time = measure * 2.0  # 2 seconds per measure
+            # Generate a basic pattern based on the template
+            # Most common pattern from template: Regular beat with enemy type 1, colors 2,2, and Aux 7
+            
+            # Place enemies every 2.5 seconds for the basic rhythm
+            current_time = 0.0
+            while current_time < song_duration:
+                # Regular enemies (type 1, colors 2,2, Aux 7)
+                writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])
+                current_time += 2.5
                 
-                # Kick drum (Lane 0) - on beats 1 and 3
-                writer.writerow([f"{base_time + 0.0}", "0", "Tap", "0", "100", "0", "None"])
-                writer.writerow([f"{base_time + 1.0}", "0", "Tap", "0", "100", "0", "None"])
+                # Every 10 seconds, add a special enemy (type 2, colors 5,6, Aux 5)
+                if int(current_time) % 10 == 0:
+                    writer.writerow([f"{current_time:.2f}", "2", "5", "6", "1", "", "5"])
+                    current_time += 0.5
                 
-                # Snare drum (Lane 1) - on beats 2 and 4
-                writer.writerow([f"{base_time + 0.5}", "1", "Tap", "0", "100", "0", "None"])
-                writer.writerow([f"{base_time + 1.5}", "1", "Tap", "0", "100", "0", "None"])
+                # Every 20 seconds, add a sequence of timed enemies (type 3 with interval)
+                if int(current_time) % 20 == 0:
+                    writer.writerow([f"{current_time:.2f}", "3", "2", "2", "1", "2", "7"])
+                    current_time += 2.0
                 
-                # Hi-hat (Lane 2) - on all eighth notes
-                for i in range(8):
-                    time = base_time + (i * 0.25)
-                    writer.writerow([f"{time}", "2", "Tap", "0", "85", "0", "None"])
+                # Add variety with some random enemy types
+                if random.random() < 0.3:  # 30% chance
+                    writer.writerow([f"{(current_time + 0.63):.2f}", "1", "1", "1", "1", "", "6"])
                 
-                # Crash/Tom fills (Lane 3) - at the end of every 4th measure
-                if measure % 4 == 3:
-                    for i in range(4):
-                        time = base_time + 1.5 + (i * 0.125)
-                        writer.writerow([f"{time}", "3", "Tap", "0", "100", "0", "None"])
+                # Add occasional clusters of enemies
+                if random.random() < 0.1 and current_time > 30:  # 10% chance after 30 seconds
+                    base = current_time
+                    writer.writerow([f"{base:.2f}", "2", "2", "4", "1", "", "7"])
+                    writer.writerow([f"{(base + 0.32):.2f}", "2", "2", "4", "1", "", "7"])
+                    writer.writerow([f"{(base + 0.63):.2f}", "2", "2", "4", "1", "", "7"])
         
         logging.info(f"Generated Drums Rock compatible notes.csv at {output_path}")
         return True
