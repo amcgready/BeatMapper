@@ -577,6 +577,7 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
   const [currentBeatmap, setCurrentBeatmap] = useState(null);
   // Add state to store extracted metadata
   const [extractedMetadata, setExtractedMetadata] = useState(null);
+  const [downloadingMap, setDownloadingMap] = useState({});
 
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
@@ -918,24 +919,50 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
                       <button 
                         onClick={async () => {
                           try {
+                            setDownloadingMap(prev => ({ ...prev, [beatmap.id]: true }));
                             setLogs(prev => [...prev, `Downloading beatmap: ${beatmap.title}...`]);
+                            
                             const response = await fetch(`/api/download_beatmap/${beatmap.id}`);
                             
                             if (!response.ok) {
-                              throw new Error(`Download failed with status: ${response.status}`);
+                              // Try to get error details from response
+                              let errorMessage = `Download failed with status: ${response.status}`;
+                              try {
+                                const contentType = response.headers.get('content-type');
+                                if (contentType && contentType.includes('application/json')) {
+                                  const errorData = await response.json();
+                                  errorMessage = errorData.error || errorMessage;
+                                }
+                              } catch {}
+                              
+                              throw new Error(errorMessage);
                             }
                             
+                            // Handle successful ZIP download
                             const blob = await response.blob();
                             saveAs(blob, `${beatmap.title || 'beatmap'}.zip`);
+                            
                             setLogs(prev => [...prev, `Beatmap downloaded successfully: ${beatmap.title}`]);
                           } catch (error) {
                             console.error("Error downloading beatmap:", error);
                             setLogs(prev => [...prev, `Failed to download beatmap: ${error.message}`]);
+                          } finally {
+                            setDownloadingMap(prev => ({ ...prev, [beatmap.id]: false }));
                           }
                         }}
                         className="bg-green-600 hover:bg-green-700 text-white py-1 px-3 rounded text-sm flex items-center"
+                        disabled={downloadingMap[beatmap.id]}
                       >
-                        <FaDownload className="mr-1" /> Download
+                        {downloadingMap[beatmap.id] ? (
+                          <>
+                            <div className="animate-spin mr-1 h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+                            <span>Downloading...</span>
+                          </>
+                        ) : (
+                          <>
+                            <FaDownload className="mr-1" /> Download
+                          </>
+                        )}
                       </button>
                     </div>
                   </div>

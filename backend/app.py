@@ -1,21 +1,20 @@
 import os
-import logging
 import json
+import time
 import uuid
-from datetime import datetime
+import shutil
+import tempfile
+import csv
+import logging
 import sqlite3
-from flask import Flask, request, send_file, jsonify, send_from_directory
+import warnings
+from flask import Flask, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 from processing.audio_converter import mp3_to_ogg
 from processing.preview_generator import generate_preview
 from processing.notes_generator import generate_notes_csv
 from processing.info_generator import generate_info_csv
 from flask_cors import CORS
-import time
-import zipfile
-import io
-import csv
-import shutil
 
 log_file = os.path.join(os.path.dirname(__file__), 'beatmapper.log')
 logging.basicConfig(
@@ -566,189 +565,196 @@ def update_metadata():
 
 @app.route('/api/download_beatmap/<beatmap_id>', methods=['GET'])
 def download_beatmap(beatmap_id):
-    """Download a beatmap with only the required files"""
+    """Download a beatmap with the required files"""
+    temp_dir = None
+    zip_path = None
     try:
         app.logger.info(f"Download requested for beatmap: {beatmap_id}")
         
         # Path to beatmap directory
         beatmap_dir = os.path.join(OUTPUT_DIR, beatmap_id)
         
+        # Check if beatmap directory exists
         if not os.path.exists(beatmap_dir):
             app.logger.error(f"Beatmap directory not found: {beatmap_dir}")
-            return jsonify({"status": "error", "message": "Beatmap not found"}), 404
+            return jsonify({"error": "Beatmap not found"}), 404
         
-        # Create a temporary directory for packaging
-        import tempfile
+        # Create temporary directory for the zip contents
         temp_dir = tempfile.mkdtemp(prefix=f"beatmap_dl_{beatmap_id}_")
-        app.logger.info(f"Created temporary directory for download: {temp_dir}")
+        app.logger.info(f"Created temporary directory: {temp_dir}")
         
-        # Define required files
+        # Define the required files
         required_files = [
-            'song.ogg',
-            'preview.ogg',
-            'info.csv',
-            'notes.csv',
-            'album.jpg'
+            "song.ogg",
+            "preview.ogg",
+            "info.csv",
+            "notes.csv",
+            "album.jpg"
         ]
         
-        # Copy only the required files to temp directory
-        missing_files = []
-        for file_name in required_files:
-            src_path = os.path.join(beatmap_dir, file_name)
-            dst_path = os.path.join(temp_dir, file_name)
+        # Copy existing files to temp directory
+        for filename in required_files:
+            src_path = os.path.join(beatmap_dir, filename)
+            dest_path = os.path.join(temp_dir, filename)
             
             if os.path.exists(src_path):
                 try:
-                    shutil.copy2(src_path, dst_path)
-                    app.logger.info(f"Copied {file_name} to temp directory")
+                    shutil.copy2(src_path, dest_path)
+                    app.logger.info(f"Copied {filename} to temp directory")
                 except Exception as e:
-                    app.logger.error(f"Failed to copy {file_name}: {e}")
-                    missing_files.append(file_name)
+                    app.logger.error(f"Error copying {filename}: {str(e)}")
             else:
-                app.logger.warning(f"Missing required file: {file_name}")
-                missing_files.append(file_name)
+                app.logger.warning(f"File not found, will create placeholder: {filename}")
+                
+                # Create placeholder files for missing files
+                if filename == "notes.csv":
+                    try:
+                        with open(dest_path, 'w', newline='') as f:
+                            writer = csv.writer(f)
+                            writer.writerow(["Time", "Lane", "Type", "Length", "Volume", "Pitch", "Effect"])
+                            # Generate a simple pattern for 60 seconds
+                            for i in range(60):
+                                # Basic pattern: kick, snare, hihat
+                                if i % 2 == 0:
+                                    writer.writerow([f"{i}.000", "1", "Hit", "0", "100", "Kick", "None"])
+                                    writer.writerow([f"{i}.000", "3", "Hit", "0", "85", "HiHat", "None"])
+                                else:
+                                    writer.writerow([f"{i}.000", "2", "Hit", "0", "100", "Snare", "None"])
+                                    writer.writerow([f"{i}.000", "3", "Hit", "0", "85", "HiHat", "None"])
+                                writer.writerow([f"{i}.500", "3", "Hit", "0", "85", "HiHat", "None"])
+                    except Exception as e:
+                        app.logger.error(f"Error creating notes.csv: {str(e)}")
+                
+                elif filename == "info.csv":
+                    try:
+                        # Try to get metadata from beatmaps.json
+                        metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
+                        title = "Unknown"
+                        artist = "Unknown"
+                        album = "Unknown"
+                        year = ""
+                        
+                        if os.path.exists(metadata_path):
+                            try:
+                                with open(metadata_path, 'r') as f:
+                                    beatmaps = json.load(f)
+                                    for bm in beatmaps:
+                                        if bm.get("id") == beatmap_id:
+                                            title = bm.get("title", "Unknown")
+                                            artist = bm.get("artist", "Unknown")
+                                            album = bm.get("album", "Unknown")
+                                            year = bm.get("year", "")
+                                            break
+                            except Exception as e:
+                                app.logger.error(f"Error reading metadata: {str(e)}")
+                        
+                        with open(dest_path, 'w', newline='') as f:
+                            writer = csv.writer(f)
+                            writer.writerow(["Title", "Artist", "Album", "Year"])
+                            writer.writerow([title, artist, album, year])
+                    except Exception as e:
+                        app.logger.error(f"Error creating info.csv: {str(e)}")
+                
+                elif filename == "album.jpg":
+                    try:
+                        # Create a simple placeholder album art
+                        from PIL import Image
+                        img = Image.new('RGB', (500, 500), color=(73, 109, 137))
+                        img.save(dest_path)
+                        app.logger.info(f"Created placeholder album art at {dest_path}")
+                    except Exception as e:
+                        app.logger.error(f"Error creating album.jpg: {str(e)}")
+                
+                elif filename == "preview.ogg" and os.path.exists(os.path.join(beatmap_dir, "song.ogg")):
+                    try:
+                        # Try to create preview from song file
+                        from processing.preview_generator import generate_preview
+                        song_path = os.path.join(beatmap_dir, "song.ogg")
+                        generate_preview(song_path, dest_path)
+                        app.logger.info(f"Generated preview.ogg from song.ogg")
+                    except Exception as e:
+                        app.logger.error(f"Error generating preview.ogg: {str(e)}")
         
-        # Get beatmap metadata for naming the download
-        beatmap_title = "beatmap"
+        # Create the zip file
+        file_name = f"beatmap_{beatmap_id}_{int(time.time())}.zip"
+        zip_path = os.path.join(OUTPUT_DIR, file_name)
+        
+        # Make sure we can write to the output directory
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        
+        # Make the archive
         try:
-            metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
-            if os.path.exists(metadata_path):
+            app.logger.info(f"Creating zip archive from {temp_dir} to {zip_path}")
+            shutil.make_archive(
+                os.path.splitext(zip_path)[0],  # Base name without extension
+                'zip',                          # Format
+                temp_dir                        # Root directory to compress
+            )
+            app.logger.info(f"Created zip archive at {zip_path}")
+        except Exception as e:
+            app.logger.error(f"Error creating zip archive: {str(e)}", exc_info=True)
+            return jsonify({"error": f"Failed to create zip file: {str(e)}"}), 500
+        
+        # Verify zip file exists
+        if not os.path.exists(zip_path):
+            app.logger.error(f"Expected zip file not found: {zip_path}")
+            return jsonify({"error": "Failed to create zip file"}), 500
+            
+        # Get beatmap title for better download name
+        title = "beatmap"
+        metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
+        if os.path.exists(metadata_path):
+            try:
                 with open(metadata_path, 'r') as f:
                     beatmaps = json.load(f)
-                for beatmap in beatmaps:
-                    if beatmap.get('id') == beatmap_id:
-                        beatmap_title = beatmap.get("title", "beatmap")
-                        break
-        except Exception as e:
-            app.logger.error(f"Error getting beatmap title: {e}")
+                    for bm in beatmaps:
+                        if bm.get("id") == beatmap_id:
+                            title = bm.get("title", "beatmap")
+                            break
+            except Exception as e:
+                app.logger.error(f"Error getting beatmap title: {str(e)}")
         
-        # Create placeholders for missing files
-        if missing_files:
-            app.logger.warning(f"Creating placeholders for missing files: {missing_files}")
-            
-            if 'preview.ogg' in missing_files and 'song.ogg' not in missing_files:
-                # If we have song.ogg but no preview.ogg, generate it
-                try:
-                    generate_preview(
-                        os.path.join(beatmap_dir, 'song.ogg'), 
-                        os.path.join(temp_dir, 'preview.ogg')
-                    )
-                    app.logger.info("Generated missing preview.ogg")
-                    missing_files.remove('preview.ogg')
-                except Exception as e:
-                    app.logger.error(f"Failed to generate preview.ogg: {e}")
-            
-            if 'album.jpg' in missing_files:
-                try:
-                    from PIL import Image
-                    img = Image.new('RGB', (500, 500), color=(73, 109, 137))
-                    img.save(os.path.join(temp_dir, 'album.jpg'))
-                    app.logger.info("Created placeholder album.jpg")
-                except Exception as e:
-                    app.logger.error(f"Failed to create placeholder artwork: {e}")
-            
-            if 'info.csv' in missing_files:
-                try:
-                    # Get metadata if available
-                    metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
-                    metadata = {"title": "Unknown", "artist": "Unknown", "album": "Unknown", "year": ""}
-                    
-                    if os.path.exists(metadata_path):
-                        with open(metadata_path, 'r') as f:
-                            beatmaps = json.load(f)
-                            for beatmap in beatmaps:
-                                if beatmap.get('id') == beatmap_id:
-                                    metadata = {
-                                        "title": beatmap.get("title", "Unknown"),
-                                        "artist": beatmap.get("artist", "Unknown"),
-                                        "album": beatmap.get("album", "Unknown"),
-                                        "year": beatmap.get("year", "")
-                                    }
-                                    break
-                    
-                    # Create info.csv
-                    with open(os.path.join(temp_dir, 'info.csv'), 'w', newline='') as f:
-                        writer = csv.writer(f)
-                        writer.writerow(["Title", "Artist", "Album", "Year"])
-                        writer.writerow([
-                            metadata["title"],
-                            metadata["artist"],
-                            metadata["album"],
-                            metadata["year"]
-                        ])
-                    app.logger.info("Created missing info.csv")
-                except Exception as e:
-                    app.logger.error(f"Failed to create info.csv: {e}")
-            
-            if 'notes.csv' in missing_files:
-                try:
-                    with open(os.path.join(temp_dir, 'notes.csv'), 'w', newline='') as f:
-                        writer = csv.writer(f)
-                        writer.writerow(["Time", "Lane", "Type", "Length", "Volume", "Pitch", "Effect"])
-                        # Add a basic pattern
-                        for i in range(30):
-                            lane = (i % 3) + 1
-                            writer.writerow([f"{i}.0", str(lane), "Hit", "0", "100", "0", "None"])
-                    app.logger.info("Created missing notes.csv")
-                except Exception as e:
-                    app.logger.error(f"Failed to create notes.csv: {e}")
+        # Sanitize filename
+        safe_title = "".join(c for c in title if c.isalnum() or c == ' ')
+        safe_title = safe_title.replace(" ", "_")
         
-        # Create zip file with a unique name to prevent conflicts
-        zip_filename = f"beatmap_{beatmap_id}_{int(time.time())}.zip"
-        zip_path = os.path.join(OUTPUT_DIR, zip_filename)
-        
-        # Create the zip archive
+        # Return the file
         try:
-            shutil.make_archive(
-                os.path.splitext(zip_path)[0],
-                'zip',
-                temp_dir
-            )
-            app.logger.info(f"Created zip file: {zip_path}")
-        except Exception as e:
-            app.logger.error(f"Failed to create zip file: {e}")
-            # Clean up temp dir
-            shutil.rmtree(temp_dir)
-            return jsonify({"status": "error", "message": f"Failed to create zip file: {str(e)}"}), 500
-        
-        # Clean up temp directory as it's no longer needed
-        try:
-            shutil.rmtree(temp_dir)
-            app.logger.info(f"Cleaned up temp directory: {temp_dir}")
-        except Exception as e:
-            app.logger.warning(f"Failed to clean up temp directory: {e}")
-        
-        # Return the zip file to the client
-        try:
+            app.logger.info(f"Sending zip file: {zip_path}")
             response = send_file(
                 zip_path,
                 mimetype='application/zip',
                 as_attachment=True,
-                download_name=f"{beatmap_title.replace(' ', '_')}.zip"
+                download_name=f"{safe_title}.zip"
             )
             
-            # Clean up the zip file after sending
+            # Clean up the zip file after request completed
             @response.call_on_close
-            def cleanup():
+            def cleanup_zip():
                 try:
                     if os.path.exists(zip_path):
                         os.remove(zip_path)
-                        app.logger.info(f"Deleted temporary zip file: {zip_path}")
+                        app.logger.info(f"Cleaned up zip file: {zip_path}")
                 except Exception as e:
-                    app.logger.error(f"Failed to delete temporary zip file: {e}")
+                    app.logger.error(f"Error cleaning up zip file: {str(e)}")
             
             return response
-            
         except Exception as e:
-            app.logger.error(f"Error sending zip file: {e}")
-            # Attempt to clean up if sending fails
-            if os.path.exists(zip_path):
-                os.remove(zip_path)
-            return jsonify({"status": "error", "message": f"Failed to send zip file: {str(e)}"}), 500
-            
+            app.logger.error(f"Error sending zip file: {str(e)}", exc_info=True)
+            return jsonify({"error": f"Error sending file: {str(e)}"}), 500
+    
     except Exception as e:
-        app.logger.error(f"Error in download_beatmap: {e}", exc_info=True)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        app.logger.error(f"Error in download_beatmap: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+    
+    finally:
+        # Clean up temporary directory
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+                app.logger.info(f"Cleaned up temp directory: {temp_dir}")
+            except Exception as e:
+                app.logger.error(f"Error cleaning up temp directory: {str(e)}")
 
 @app.route('/api/artwork/<beatmap_id>')
 def get_artwork(beatmap_id):
