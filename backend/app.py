@@ -17,12 +17,26 @@ from processing.notes_generator import generate_notes_csv
 from processing.info_generator import generate_info_csv
 from flask_cors import CORS
 
-# Set up logging with absolute path
+# Set up log file path with absolute path
 log_file = os.path.abspath(os.path.join(os.path.dirname(__file__), 'beatmapper.log'))
-print(f"Setting up logging to file: {log_file}")  # Print to console to verify path
+print(f"Setting up logging to file: {log_file}")
 
 # Make sure the directory exists
 os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
+# Clear log file on startup
+try:
+    # Remove the existing log file to start fresh
+    if os.path.exists(log_file):
+        os.remove(log_file)
+        print(f"Previous log file cleared: {log_file}")
+    
+    # Create a fresh empty log file
+    with open(log_file, 'w') as f:
+        f.write(f"BeatMapper log started at {datetime.now().isoformat()}\n")
+    print(f"Created new log file: {log_file}")
+except Exception as e:
+    print(f"Error clearing log file: {e}")
 
 # Configure logging with both file and console output
 logging.basicConfig(
@@ -36,10 +50,15 @@ logging.basicConfig(
 
 # Add a test log message
 logger = logging.getLogger(__name__)
-logger.info("Logging initialized")
+logger.info("Logging initialized - New session started")
+logger.info(f"Log file location: {log_file}")
 
 app = Flask(__name__)
 CORS(app)
+
+# Configure Flask logger to use the same handlers
+app.logger.handlers = logger.handlers
+app.logger.setLevel(logger.level)
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB upload limit
 
@@ -56,9 +75,9 @@ def cleanup_output_dir(days=7):
             if os.path.getmtime(file_path) < cutoff:
                 try:
                     os.remove(file_path)
-                    app.logger.info(f"Deleted old file: {filename}")
+                    logger.info(f"Deleted old file: {filename}")
                 except Exception as e:
-                    app.logger.error(f"Failed to delete {filename}: {e}")
+                    logger.error(f"Failed to delete {filename}: {e}")
 
 def get_db_connection():
     """Create a connection to the SQLite database."""
@@ -648,6 +667,9 @@ def update_beatmap(beatmap_id):
 
 # Call at startup
 if __name__ == '__main__':
+    logger.info("BeatMapper server starting up...")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     cleanup_output_dir(days=7)
+    logger.info(f"Output directory: {OUTPUT_DIR}")
+    logger.info("Server initialization complete, starting Flask...")
     app.run(debug=False)
