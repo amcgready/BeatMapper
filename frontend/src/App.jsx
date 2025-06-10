@@ -977,18 +977,31 @@ export default function App() {
     const savedBeatmaps = localStorage.getItem("beatmaps");
     return savedBeatmaps ? JSON.parse(savedBeatmaps) : [];
   });
+  
   const [logs, setLogs] = useState(() => {
-    // Load logs from localStorage on app start
-    const savedLogs = localStorage.getItem("logs");
-    return savedLogs ? JSON.parse(savedLogs) : [];
+    // We'll initialize with just one welcome message instead of loading from localStorage
+    return ["BeatMapper initialized. Ready to process audio files."];
   });
+
+  // Run once when the app first loads
+  useEffect(() => {
+    // Clear any old logs in localStorage
+    localStorage.removeItem("logs");
+    
+    // Log the initialization message
+    const timestamp = new Date().toLocaleTimeString();
+    setLogs([`[${timestamp}] BeatMapper started. Session logs will be cleared on restart.`]);
+    
+    // Optional: Log app version or other initialization info
+    console.log("BeatMapper initialized - logs cleared");
+  }, []); // Empty dependency array means this runs once on mount
 
   // Sync beatmaps with localStorage
   useEffect(() => {
     localStorage.setItem("beatmaps", JSON.stringify(beatmaps));
   }, [beatmaps]);
 
-  // Sync logs with localStorage
+  // Sync logs with localStorage - but only during the session
   useEffect(() => {
     localStorage.setItem("logs", JSON.stringify(logs));
   }, [logs]);
