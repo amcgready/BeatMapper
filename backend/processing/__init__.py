@@ -6,6 +6,7 @@ Contains modules for audio conversion, preview generation and more.
 import os
 import sys
 import logging
+from .high_density_notes_generator import generate_notes_csv
 
 logger = logging.getLogger(__name__)
 logger.info(f"Processing package initialized from {__file__}")
