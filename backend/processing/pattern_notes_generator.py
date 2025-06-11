@@ -1,9 +1,28 @@
+"""
+Note generator that uses pattern recognition instead of individual hit detection.
+"""
 import os
 import csv
+import sys
 import logging
-import numpy as np
 import warnings
 from pathlib import Path
+
+try:
+    import numpy as np
+except ImportError:
+    logging.warning("NumPy not available - falling back to basic pattern")
+    # Define minimal numpy functionality needed
+    class NumpyStub:
+        def ceil(self, x):
+            return int(x) + (1 if x > int(x) else 0)
+        
+        def mean(self, x, *args, **kwargs):
+            if not x:
+                return 0
+            return sum(x) / len(x)
+            
+    np = NumpyStub()
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -368,13 +387,10 @@ def generate_basic_notes_csv(song_path, output_path, song_duration=180.0):
                 current_time += sixteenth_note
                 
                 # Every 4 16th notes is a quarter note
-                if current_time % (sixteenth_note * 4) < sixteenth_note:
+                if beat_count % 4 == 3:
                     beat_count += 1
-                    # Every 4 beats is a measure
-                    if beat_count % 4 == 0:
-                        measure += 1
         
-        logging.info(f"Generated MIDI-like basic pattern with {beat_count * 4} notes at {output_path}")
+        logging.info(f"Generated MIDI-like basic pattern at {output_path}")
         return True
         
     except Exception as e:
@@ -382,7 +398,6 @@ def generate_basic_notes_csv(song_path, output_path, song_duration=180.0):
         return False
 
 if __name__ == "__main__":
-    import sys
     if len(sys.argv) > 2:
         generate_notes_csv(sys.argv[1], None, sys.argv[2])
     else:
