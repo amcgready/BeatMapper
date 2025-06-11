@@ -1,10 +1,13 @@
 import os
 import csv
 import logging
+import random
 import warnings
-import subprocess
 import tempfile
 import shutil
+import subprocess
+import sys
+import numpy as np
 from pathlib import Path
 
 # Setup logging
@@ -26,9 +29,9 @@ def generate_notes_csv(song_path, template_path, output_path):
         
         # Try advanced beat detection with librosa
         try:
-            import numpy as np
             import librosa
-            
+            import numpy as np
+                        
             logging.info("Using librosa for advanced drum analysis")
             
             # Suppress warnings from librosa
@@ -181,11 +184,68 @@ def try_extract_drums_with_spleeter(song_path):
         logging.warning(f"Failed to extract drums with Spleeter: {str(e)}")
         return None
 
+def calculate_adaptive_threshold(y, sr, tempo):
+    """Calculate adaptive onset detection threshold based on audio characteristics"""
+    # Start with base threshold
+    base_threshold = 0.07
+    
+    # Analyze overall energy distribution
+    rms = librosa.feature.rms(y=y)[0]
+    rms_mean = np.mean(rms)
+    rms_std = np.std(rms)
+    
+    # Adjust threshold based on overall dynamics and tempo
+    if rms_std < 0.01:  # Very consistent volume
+        threshold = base_threshold * 0.8
+    elif rms_std > 0.1:  # Highly variable volume
+        threshold = base_threshold * 1.2
+    else:
+        threshold = base_threshold
+        
+    # Adjust for tempo
+    if tempo < 80:  # Slow songs need lower threshold
+        threshold *= 0.9
+    elif tempo > 160:  # Fast songs need higher threshold
+        threshold *= 1.1
+        
+    return threshold
+
+def calculate_adaptive_beat_spacing(y, sr, tempo):
+    """Calculate adaptive minimum beat spacing based on song tempo"""
+    # Base spacing at 120 BPM would be 60/120 = 0.5 seconds
+    base_spacing = 60 / tempo
+    
+    # For fast songs, we don't want too many notes, so increase minimum spacing
+    if tempo > 160:
+        return base_spacing * 0.4  # 40% of a beat
+    elif tempo > 120:
+        return base_spacing * 0.3  # 30% of a beat
+    else:
+        return base_spacing * 0.25  # 25% of a beat
+
+def calculate_adaptive_energy_threshold(y, sr):
+    """Calculate adaptive energy significance threshold based on audio characteristics"""
+    # Default threshold
+    base_threshold = 1.2
+    
+    # Analyze spectral contrast
+    contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
+    
+    # Calculate mean contrast across all frames and frequency bands
+    mean_contrast = np.mean(contrast)
+    
+    # Adjust threshold based on spectral contrast
+    if mean_contrast < 5:  # Low contrast
+        return base_threshold * 0.9
+    elif mean_contrast > 15:  # High contrast
+        return base_threshold * 1.3
+    else:
+        return base_threshold
+
 def generate_drum_synced_notes(y, sr, song_duration, tempo, output_path, optimized_bands=None):
     """Generate notes.csv with specialized drum type detection and lane mapping"""
     try:
-        import numpy as np
-        import librosa
+        import librosa                
         
         # Define frequency bands for different drum types
         default_bands = {
@@ -213,17 +273,28 @@ def generate_drum_synced_notes(y, sr, song_duration, tempo, output_path, optimiz
             "tom_high": 1, # Regular enemy
             "tom_low": 1,  # Regular enemy
             "crash": 2,    # Special enemy for crash
-            "ride": 1      # Regular enemy
+            "ride": 3      # Special enemy type for ride
         }
         
         # Map drum types to Aux values (lane numbers in Drums Rock)
+        # IMPORTANT: Use values that work with Drums Rock
         drum_to_aux = {
-            "snare": 1,
-            "kick": 2,
-            "tom_high": 3,
-            "tom_low": 4,
+            "snare": 7,   # Use values from working example
+            "kick": 7,    # Use values from working example
+            "tom_high": 7,
+            "tom_low": 7,
             "crash": 5,
             "ride": 6
+        }
+        
+        # Map drum types to color values
+        drum_to_colors = {
+            "snare": (2, 2),
+            "kick": (2, 2),
+            "tom_high": (1, 1),
+            "tom_low": (1, 1),
+            "crash": (5, 6),
+            "ride": (2, 4)
         }
         
         # ADAPTIVE PARAMETERS:
@@ -303,42 +374,42 @@ def generate_drum_synced_notes(y, sr, song_duration, tempo, output_path, optimiz
         # Write the CSV with the CORRECT Drums Rock format
         with open(output_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            # CORRECT HEADERS FOR DRUMS ROCK
-            writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "N° Enemies", "interval", "Aux"])
+            # CORRECT HEADERS FOR DRUMS ROCK - exact match with working version
+            writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
             
             # Process each drum event
             for time, drum_type in drum_events:
                 # Get enemy type and aux (lane) value for this drum type
                 enemy_type = drum_to_enemy_type.get(drum_type, 1)  # Default to regular enemy (1) if unknown
-                aux = drum_to_aux.get(drum_type, 1)  # Default to lane 1 if unknown
-                
-                # All aux values should match for consistency
-                aux_color1 = aux
-                aux_color2 = aux
-                num_enemies = "1"
-                interval = ""
+                aux = drum_to_aux.get(drum_type, 7)  # Default to lane 7 if unknown
+                color1, color2 = drum_to_colors.get(drum_type, (2, 2))  # Default colors
                 
                 # Write row in Drums Rock format
                 writer.writerow([
-                    f"{time:.2f}",  # Time with 2 decimal places
-                    enemy_type,
-                    aux_color1,
-                    aux_color2,
-                    num_enemies,
-                    interval,
-                    aux
+                    f"{time:.2f}",
+                    str(enemy_type),
+                    str(color1),
+                    str(color2),
+                    "1",
+                    "",
+                    str(aux)
                 ])
             
+            # Make sure we have some notes
+            if len(drum_events) < 10:
+                # Add some basic pattern as fallback
+                return generate_fixed_basic_notes_csv(output_path, song_duration)
+                
             # Ensure enemy data spans the song duration
-            if len(drum_events) == 0 or drum_events[-1][0] < song_duration - 10:
+            if drum_events and drum_events[-1][0] < song_duration - 10:
                 writer.writerow([
-                    f"{song_duration - 5:.2f}",  # Time
-                    1,                           # Enemy Type (regular)
-                    2,                           # Aux Color 1 (kick lane)
-                    2,                           # Aux Color 2 (kick lane)
-                    1,                           # Number of Enemies
-                    "",                          # interval
-                    2                            # Aux (kick lane)
+                    f"{song_duration - 5:.2f}",
+                    "1",
+                    "2",
+                    "2",
+                    "1",
+                    "",
+                    "7"
                 ])
         
         logging.info(f"Generated drum-synced notes.csv at {output_path} with {len(drum_events)} total beats")
@@ -346,13 +417,12 @@ def generate_drum_synced_notes(y, sr, song_duration, tempo, output_path, optimiz
         
     except Exception as e:
         logging.error(f"Failed to generate drum-synced notes: {str(e)}", exc_info=True)
-        return generate_basic_notes_csv(None, output_path, song_duration)
+        return generate_fixed_basic_notes_csv(output_path, song_duration)
 
 def fine_tune_frequency_bands(song_path):
     """Use spectral analysis to fine-tune frequency bands for the specific song"""
     try:
-        import numpy as np
-        import librosa
+        import librosa                
         
         # Load audio
         y, sr = librosa.load(song_path, sr=None)
@@ -404,6 +474,68 @@ def fine_tune_frequency_bands(song_path):
         logging.error(f"Failed to fine-tune frequency bands: {str(e)}", exc_info=True)
         return None
 
+def generate_adaptive_basic_pattern(song_path, output_path, song_duration=180.0):
+    """Generate a basic pattern but try to adapt to the song's tempo"""
+    try:
+        import librosa
+        
+        # Load the audio file
+        y, sr = librosa.load(song_path, sr=None)
+        
+        # Get song duration
+        if song_duration == 180.0:  # If using default
+            song_duration = librosa.get_duration(y=y, sr=sr)
+            
+        # Detect the tempo
+        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+        logging.info(f"Using adaptive basic pattern with detected tempo: {tempo:.2f} BPM")
+        
+        # Calculate beat duration
+        beat_duration = 60 / tempo
+        
+        with open(output_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            
+            # CORRECT HEADERS FOR DRUMS ROCK
+            writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
+            
+            # Generate a pattern based on the tempo
+            measures = int(song_duration / (4 * beat_duration)) + 1
+            
+            for measure in range(measures):
+                base_time = measure * 4 * beat_duration
+                
+                # Basic pattern (every beat)
+                for beat in range(4):
+                    time = base_time + beat * beat_duration
+                    
+                    # Alternate between types
+                    if beat == 0:
+                        # Downbeat - use type 1, colors 2,2, Aux 7
+                        writer.writerow([f"{time:.2f}", "1", "2", "2", "1", "", "7"])
+                    elif beat == 2:
+                        # Beat 3 - use type 1, colors 2,2, Aux 7
+                        writer.writerow([f"{time:.2f}", "1", "2", "2", "1", "", "7"])
+                    else:
+                        # Other beats - use type 1, colors 1,1, Aux 6 
+                        writer.writerow([f"{time:.2f}", "1", "1", "1", "1", "", "6"])
+                
+                # Every 4 measures, add a special enemy
+                if measure % 4 == 3:
+                    time = base_time + 3 * beat_duration + beat_duration/2
+                    writer.writerow([f"{time:.2f}", "2", "5", "6", "1", "", "5"])
+                
+                # Every 8 measures, add a timed sequence
+                if measure % 8 == 7:
+                    time = base_time + 2 * beat_duration
+                    writer.writerow([f"{time:.2f}", "3", "2", "2", "1", "2", "7"])
+        
+        logging.info(f"Generated tempo-adaptive notes.csv at {output_path}")
+        return True
+    except Exception as e:
+        logging.error(f"Error in adaptive pattern generation: {str(e)}")
+        return generate_fixed_basic_notes_csv(output_path, song_duration)
+
 def generate_basic_notes_csv(song_path, output_path, song_duration=180.0):
     """Generate notes.csv with basic patterns but try to adapt to song characteristics"""
     logging.info("Using adaptive basic pattern generation")
@@ -418,51 +550,54 @@ def generate_basic_notes_csv(song_path, output_path, song_duration=180.0):
 
 def generate_fixed_basic_notes_csv(output_path, song_duration=180.0):
     """Generate completely fixed pattern as last resort"""
-    # Original basic pattern generator code
+    # Original basic pattern generator code from the working version
     logging.info("Using completely fixed basic pattern generation")
     
     try:
-        # Fixed tempo
-        bpm = 120
-        beat_duration = 60 / bpm
-        
+        # Create the notes.csv file with exact format Drums Rock expects
         with open(output_path, 'w', newline='') as f:
             writer = csv.writer(f)
             
-            # CORRECT HEADERS FOR DRUMS ROCK
-            writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "N° Enemies", "interval", "Aux"])
+            # Header row - exactly as in the template
+            writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
             
-            # Generate a simple fixed pattern
-            measures = int(song_duration / (4 * beat_duration))
-            for measure in range(measures):
-                base_time = measure * 4 * beat_duration
+            # Place enemies every 2.5 seconds for the basic rhythm
+            current_time = 0.0
+            while current_time < song_duration:
+                # Regular enemies (type 1, colors 2,2, Aux 7)
+                writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])
+                current_time += 2.5
                 
-                # Kick on 1 and 3
-                writer.writerow([
-                    f"{base_time:.2f}", 1, 2, 2, 1, "", 2  # Kick
-                ])
-                writer.writerow([
-                    f"{base_time + 2 * beat_duration:.2f}", 1, 2, 2, 1, "", 2  # Kick
-                ])
+                # Every 10 seconds, add a special enemy (type 2, colors 5,6, Aux 5)
+                if int(current_time) % 10 == 0:
+                    writer.writerow([f"{current_time:.2f}", "2", "5", "6", "1", "", "5"])
+                    current_time += 0.5
                 
-                # Snare on 2 and 4
-                writer.writerow([
-                    f"{base_time + beat_duration:.2f}", 1, 1, 1, 1, "", 1  # Snare
-                ])
-                writer.writerow([
-                    f"{base_time + 3 * beat_duration:.2f}", 1, 1, 1, 1, "", 1  # Snare
-                ])
+                # Every 20 seconds, add a sequence of timed enemies (type 3 with interval)
+                if int(current_time) % 20 == 0:
+                    writer.writerow([f"{current_time:.2f}", "3", "2", "2", "1", "2", "7"])
+                    current_time += 2.0
+                
+                # Add variety with some random enemy types
+                if random.random() < 0.3:  # 30% chance
+                    writer.writerow([f"{(current_time + 0.63):.2f}", "1", "1", "1", "1", "", "6"])
+                
+                # Add occasional clusters of enemies
+                if random.random() < 0.1 and current_time > 30:  # 10% chance after 30 seconds
+                    base = current_time
+                    writer.writerow([f"{base:.2f}", "2", "2", "4", "1", "", "7"])
+                    writer.writerow([f"{(base + 0.32):.2f}", "2", "2", "4", "1", "", "7"])
+                    writer.writerow([f"{(base + 0.63):.2f}", "2", "2", "4", "1", "", "7"])
         
-        logging.info(f"Generated fixed basic notes.csv at {output_path}")
+        logging.info(f"Generated Drums Rock compatible notes.csv at {output_path}")
         return True
         
     except Exception as e:
-        logging.error(f"Failed to generate fixed basic notes: {str(e)}", exc_info=True)
+        logging.error(f"Failed to generate fixed basic notes: {str(e)}")
         return False
 
 if __name__ == "__main__":
     # Example usage
-    import sys
     if len(sys.argv) > 2:
         song_path = sys.argv[1]
         output_path = sys.argv[2]
