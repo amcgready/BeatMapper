@@ -228,7 +228,7 @@ def try_extract_drums_with_spleeter(song_path):
 def calculate_adaptive_threshold(y, sr, tempo):
     """Calculate adaptive onset detection threshold based on audio characteristics"""
     # IMPROVED: Start with a much lower base threshold to catch more subtle drums
-    base_threshold = 0.035  # Reduced from 0.07 to catch more beats
+    base_threshold = 0.015  # Current value: 0.035
     
     # Analyze overall energy distribution
     rms = librosa.feature.rms(y=y)[0]
@@ -257,12 +257,13 @@ def calculate_adaptive_beat_spacing(tempo):
     base_spacing = 60 / tempo
     
     # IMPROVED: Use smaller fractions to catch more beats
+    # Allow much closer spacing between events
     if tempo > 160:
-        return base_spacing * 0.3  # 30% of a beat (was 40%)
+        return base_spacing * 0.1  # Current value: 0.3
     elif tempo > 120:
-        return base_spacing * 0.25  # 25% of a beat (was 30%)
+        return base_spacing * 0.08  # Current value: 0.25
     else:
-        return base_spacing * 0.2  # 20% of a beat (was 25%)
+        return base_spacing * 0.05  # Current value: 0.2
 
 def multi_band_onset_detection(y, sr, bands):
     """
@@ -428,19 +429,13 @@ def generate_drum_synced_notes(y, sr, song_duration, tempo, beats, output_path, 
         # IMPROVED: Sort and clean up events - remove duplicates within small time windows
         all_events.sort(key=lambda x: x[0])
         
-        # Clean up events that are too close to each other
+        # Cleaned events will store the final output events
         cleaned_events = []
-        last_time = -1
         
+        # Group events by timestamps, allowing multiple hits at the same time
         for i, (time, drum_type) in enumerate(all_events):
-            # Skip if too close to previous event unless it's a different drum type
-            if i > 0:
-                # Allow closer spacing for different drum types
-                if time - last_time < min_beat_spacing * 0.5:
-                    continue
-                
+            # Add to cleaned events directly
             cleaned_events.append((time, drum_type))
-            last_time = time
             
         # POST-PROCESSING: Make sure important beats have events
         # If using the beat tracker results, ensure every beat has at least one event
@@ -568,13 +563,13 @@ def fine_tune_frequency_bands(song_path):
         
         # Find peaks in different frequency regions
         drum_bands = {
-            "kick": (0, 150),
-            "snare": (150, 400),
+            "kick": (40, 100),
+            "snare": (180, 320),
             "tom_low": (100, 300),
             "tom_high": (300, 500),
             "crash": (800, 1600),
             "ride": (1500, 4000),
-            "hihat": (5000, 10000)  # NEW: Added hi-hat detection
+            "hihat": (8000, 15000)  # NEW: Added hi-hat detection
         }
         
         optimized_bands = {}

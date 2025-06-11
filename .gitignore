@@ -25,3 +25,5 @@ Thumbs.db
 .env
 analyze_midi_reference.py
 .gitignore
+MIDItool/midi_analysis_tool.py
+MIDItool/requirements_analysis.txt
