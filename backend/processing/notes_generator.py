@@ -456,7 +456,7 @@ def classify_drum_pattern(segment, sr, tempo):
 def calculate_adaptive_threshold(y, sr, tempo):
     """Calculate an adaptive threshold based on audio characteristics"""
     # Lower the base threshold dramatically
-    base_threshold = 0.0001  # Previously 0.0005
+    base_threshold = 0.00005  # Previously 0.0001
     
     # Calculate RMS energy
     rms = np.sqrt(np.mean(y**2))
@@ -495,9 +495,9 @@ def multi_band_onset_detection(y, sr, bands=None):
     if bands is None:
         # Use more targeted frequency bands
         bands = {
-            'kick': (30, 100),     # Narrower low-end focus
-            'snare': (200, 350),   # More focused snare band
-            'hihat': (7000, 12000) # Higher frequencies for hihat
+            'kick': (30, 90),       # Even more focused
+            'snare': (180, 320),    # Slightly wider
+            'hihat': (8000, 14000)  # Higher frequency focus
         }
     
     events = []
@@ -521,7 +521,7 @@ def multi_band_onset_detection(y, sr, bands=None):
         )
         
         # Use a drastically lower threshold
-        threshold = 0.00005  # Previously around 0.0002
+        threshold = 0.000025  # Previously around 0.00005
         
         onset_frames = librosa.onset.onset_detect(
             onset_envelope=onset_env, 
@@ -837,7 +837,7 @@ typical_patterns = [
      (0.75, "hihat")]
 ]
 
-# Apply these pattern templates to enhance detection
+# Detect commonly occurring drum patterns in the song and replicate them
 
 if __name__ == "__main__":
     # Example usage
