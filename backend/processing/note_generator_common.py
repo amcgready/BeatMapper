@@ -84,9 +84,11 @@ def select_generator(generator_type=None, song_path=None):
                 writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
                 
                 # Generate very basic pattern - one note every 0.5 seconds
+                current_time = 3.0  # Start at standard offset
                 for i in range(360):  # 3 minutes of content at 2 notes per second
-                    time = i * 0.5
-                    writer.writerow([f"{time:.2f}", "1", "2", "2", "1", "", "7"])
+                    writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])
+                    current_time += 0.5
+            logger.info(f"Fallback generator created basic pattern at {output_path}")
             return True
         except Exception as e:
             logger.error(f"Fallback generator failed: {e}")
@@ -95,10 +97,26 @@ def select_generator(generator_type=None, song_path=None):
     # Import checking with proper error handling
     def check_module(module_name):
         try:
-            __import__(module_name)
+            # Try absolute import first
+            module_path = f"backend.processing.{module_name}"
+            __import__(module_path)
             return True
         except ImportError:
-            return False
+            try:
+                # Try relative import as backup
+                if module_name == "pattern_notes_generator":
+                    from . import pattern_notes_generator
+                elif module_name == "notes_generator":
+                    from . import notes_generator
+                elif module_name == "high_density_notes_generator":
+                    from . import high_density_notes_generator
+                return True
+            except ImportError:
+                logger.warning(f"Module {module_name} not found")
+                return False
+            except Exception as e:
+                logger.warning(f"Error importing {module_name}: {e}")
+                return False
     
     # Check for available generators
     pattern_generator_available = check_module("pattern_notes_generator")
@@ -109,31 +127,31 @@ def select_generator(generator_type=None, song_path=None):
     if generator_type:
         if generator_type == GENERATOR_PATTERN and pattern_generator_available:
             try:
-                from pattern_notes_generator import generate_notes_csv
+                from .pattern_notes_generator import generate_notes_csv
                 return generate_notes_csv
-            except ImportError:
-                logger.error("Failed to import pattern_notes_generator")
+            except ImportError as e:
+                logger.error(f"Failed to import pattern_notes_generator: {e}")
                 
         elif generator_type == GENERATOR_HIGH_DENSITY and high_density_generator_available:
             try:
-                from high_density_notes_generator import generate_notes_csv
+                from .high_density_notes_generator import generate_notes_csv
                 return generate_notes_csv
-            except ImportError:
-                logger.error("Failed to import high_density_notes_generator")
+            except ImportError as e:
+                logger.error(f"Failed to import high_density_notes_generator: {e}")
                 
         elif generator_type == GENERATOR_STANDARD and standard_generator_available:
             try:
-                from notes_generator import generate_notes_csv
+                from .notes_generator import generate_notes_csv
                 return generate_notes_csv
-            except ImportError:
-                logger.error("Failed to import notes_generator")
+            except ImportError as e:
+                logger.error(f"Failed to import notes_generator: {e}")
     
     # Auto-select based on song characteristics if song_path provided
-    if song_path:
+    if song_path and check_librosa_available():
         # Try to detect if the song has a lot of percussion, in which case high density might be better
         try:
             import librosa
-            y, sr = librosa.load(song_path, sr=None)
+            y, sr = librosa.load(song_path, sr=None, duration=30)  # Load just first 30 seconds for analysis
             y_harmonic, y_percussive = librosa.effects.hpss(y)
             
             # If percussive content is high relative to harmonic, use high density
@@ -142,36 +160,39 @@ def select_generator(generator_type=None, song_path=None):
             
             if perc_energy > harm_energy * 0.8 and high_density_generator_available:
                 try:
-                    from high_density_notes_generator import generate_notes_csv
+                    from .high_density_notes_generator import generate_notes_csv
                     logger.info("Auto-selected high density generator based on audio analysis")
                     return generate_notes_csv
-                except ImportError:
-                    pass
-        except:
+                except ImportError as e:
+                    logger.warning(f"Could not import high density generator: {e}")
+        except Exception as e:
             # If analysis fails, just fall through to default selection
-            pass
+            logger.warning(f"Audio analysis failed: {e}")
     
     # Default fallback chain
     if pattern_generator_available:
         try:
-            from pattern_notes_generator import generate_notes_csv
+            from .pattern_notes_generator import generate_notes_csv
+            logger.info("Using pattern-based note generator")
             return generate_notes_csv
-        except ImportError:
-            logger.error("Failed to import pattern_notes_generator")
+        except ImportError as e:
+            logger.error(f"Failed to import pattern_notes_generator: {e}")
             
     elif standard_generator_available:
         try:
-            from notes_generator import generate_notes_csv
+            from .notes_generator import generate_notes_csv
+            logger.info("Using standard note generator")
             return generate_notes_csv
-        except ImportError:
-            logger.error("Failed to import notes_generator")
+        except ImportError as e:
+            logger.error(f"Failed to import notes_generator: {e}")
             
     elif high_density_generator_available:
         try:
-            from high_density_notes_generator import generate_notes_csv
+            from .high_density_notes_generator import generate_notes_csv
+            logger.info("Using high density note generator")
             return generate_notes_csv
-        except ImportError:
-            logger.error("Failed to import high_density_notes_generator")
+        except ImportError as e:
+            logger.error(f"Failed to import high_density_notes_generator: {e}")
     
     logger.warning("Using fallback generator as no suitable generators were found")
     return fallback_generator
@@ -196,3 +217,11 @@ def generate_notes(song_path, template_path, output_path, generator_type=None):
     except Exception as e:
         logger.error(f"Note generation failed: {str(e)}")
         return False
+
+def add_micro_timing_variations(time_value, amount=0.03):
+    """
+    Add small timing variations to make notes feel more human
+    """
+    import random
+    variation = random.uniform(-amount, amount)
+    return round(time_value + variation, 2)

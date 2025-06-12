@@ -1,23 +1,55 @@
+"""
+High-density notes generator for creating intense, challenging patterns.
+Produces significantly more notes than the standard generator.
+"""
 import os
 import csv
+import sys
 import logging
-import numpy as np
 import warnings
+import random
 from pathlib import Path
+
+try:
+    import numpy as np
+except ImportError:
+    logging.warning("NumPy not available - falling back to basic pattern")
+    # Define minimal numpy functionality needed
+    class NumpyStub:
+        def ceil(self, x):
+            return int(x) + (1 if x > int(x) else 0)
+        
+        def mean(self, x, *args, **kwargs):
+            if not x:
+                return 0
+            return sum(x) / len(x)
+        
+        def where(self, condition, x, y):
+            # Simple implementation of np.where
+            result = []
+            for i in range(len(condition)):
+                if condition[i]:
+                    result.append(x[i] if hasattr(x, '__getitem__') else x)
+                else:
+                    result.append(y[i] if hasattr(y, '__getitem__') else y)
+            return result
+            
+    np = NumpyStub()
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def generate_notes_csv(song_path, template_path, output_path):
     """Generate extremely dense notes based on minimal filtering and pattern infilling"""
     try:
-        logging.info(f"Generating high-density notes for {os.path.basename(song_path)}")
+        logger.info(f"Generating HIGH DENSITY drum notes for {os.path.basename(song_path)}")
         
         # Try to use librosa for analysis
         try:
             import librosa
             
-            # Suppress warnings
+            # Suppress warnings from librosa
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 
@@ -26,38 +58,36 @@ def generate_notes_csv(song_path, template_path, output_path):
                 
                 # Get song duration
                 song_duration = librosa.get_duration(y=y, sr=sr)
-                logging.info(f"Song duration: {song_duration:.2f} seconds")
+                logger.info(f"Song duration: {song_duration:.2f} seconds")
                 
                 # Detect the tempo
                 tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-                logging.info(f"Detected tempo: {tempo:.2f} BPM")
+                logger.info(f"Detected tempo: {tempo:.2f} BPM")
                 
-                # MASSIVE CHANGE: Use aggressive onset detection with multiple methods
-                logging.info("Using aggressive onset detection...")
-                high_density_events = generate_high_density_events(y, sr, tempo, song_duration)
+                # Generate high-density events
+                events = generate_high_density_events(y, sr, tempo, song_duration)
                 
-                # Generate the notes CSV
-                success = write_high_density_notes_csv(high_density_events, song_duration, tempo, output_path)
+                # Write these events to CSV
+                success = write_high_density_notes_csv(events, song_duration, tempo, output_path)
                 
                 if success:
-                    logging.info(f"Successfully generated high-density notes at {output_path}")
+                    logger.info(f"Successfully generated high-density notes.csv at {output_path}")
                     return True
                 
         except ImportError:
-            logging.warning("Could not import librosa, falling back to basic pattern")
+            logger.warning("Could not import librosa, falling back to dense pattern")
         except Exception as e:
-            logging.error(f"Error in high-density generation: {str(e)}")
+            logger.error(f"Error with analysis: {str(e)}")
         
         # Fallback to dense pattern
-        return generate_dense_pattern_csv(song_path, output_path, song_duration=180.0)
+        return generate_dense_pattern_csv(song_path, output_path)
         
     except Exception as e:
-        logging.error(f"Failed to generate notes.csv: {str(e)}")
+        logger.error(f"Failed to generate high-density notes.csv: {str(e)}")
         return False
 
 def generate_high_density_events(y, sr, tempo, song_duration):
     """Generate extremely dense note events using multiple detection methods"""
-    import librosa
     
     events = []
     
@@ -65,236 +95,292 @@ def generate_high_density_events(y, sr, tempo, song_duration):
     beat_duration = 60 / tempo
     sixteenth_duration = beat_duration / 4
     
-    # 1. EXTREMELY LOW THRESHOLD ONSET DETECTION
-    # Extract percussive component
-    y_harmonic, y_percussive = librosa.effects.hpss(y)
-    
-    # Use an absurdly low threshold to catch nearly everything
-    onset_env = librosa.onset.onset_strength(y=y_percussive, sr=sr)
-    onset_frames = librosa.onset.onset_detect(
-        onset_envelope=onset_env, sr=sr,
-        threshold=0.0001,  # Ultra-low threshold
-        pre_max=0.02*sr//512,  # Smaller window to catch more events
-        post_max=0.02*sr//512,
-        pre_avg=0.05*sr//512,
-        post_avg=0.05*sr//512
-    )
-    onset_times = librosa.frames_to_time(onset_frames, sr=sr)
-    
-    # Add detected onsets as events
-    for i, time in enumerate(onset_times):
-        # Alternate between kick and hihat
-        drum_type = "kick" if i % 3 == 0 else ("snare" if i % 3 == 1 else "hihat")
-        events.append((time, drum_type))
-    
-    logging.info(f"Detected {len(onset_times)} primary onsets")
-    
-    # 2. RMS ENERGY BASED DETECTION
-    # Compute RMS energy
-    rms = librosa.feature.rms(y=y)[0]
-    
-    # Find peaks in RMS with extremely low threshold
-    rms_peaks = librosa.util.peak_pick(
-        rms, 
-        pre_max=3,  # Very small windows
-        post_max=3,
-        pre_avg=10,
-        post_avg=10,
-        delta=0.0001,  # Ultra-low threshold
-        wait=1
-    )
-    
-    # Convert frames to times
-    rms_times = librosa.frames_to_time(rms_peaks, sr=sr, hop_length=512)
-    
-    # Add detected RMS peaks as events
-    for time in rms_times:
-        # Add as kick drums (strong beats)
-        events.append((time, "kick"))
-    
-    logging.info(f"Detected {len(rms_times)} RMS peaks")
-    
-    # 3. SPECTRAL FLUX BASED DETECTION
-    flux = librosa.onset.onset_strength(
-        y=y, sr=sr,
-        feature=librosa.feature.spectral_flux
-    )
-    
-    # Find peaks in flux with extremely low threshold
-    flux_peaks = librosa.util.peak_pick(
-        flux, 
-        pre_max=3,
-        post_max=3,
-        pre_avg=10,
-        post_avg=10,
-        delta=0.0001,  # Ultra-low threshold
-        wait=1
-    )
-    
-    # Convert frames to times
-    flux_times = librosa.frames_to_time(flux_peaks, sr=sr, hop_length=512)
-    
-    # Add detected flux peaks as events
-    for time in flux_times:
-        # Add as hihat drums (sharp attacks)
-        events.append((time, "hihat"))
-    
-    logging.info(f"Detected {len(flux_times)} spectral flux peaks")
-    
-    # 4. HIGH FREQUENCY CONTENT DETECTION (for cymbals)
-    # Filter to high frequencies
-    from scipy.signal import butter, sosfilt
-    
-    def butter_highpass(cutoff, fs, order=5):
-        nyq = 0.5 * fs
-        normal_cutoff = cutoff / nyq
-        sos = butter(order, normal_cutoff, btype='high', analog=False, output='sos')
-        return sos
-    
-    def highpass_filter(data, cutoff, fs, order=5):
-        sos = butter_highpass(cutoff, fs, order=order)
-        y = sosfilt(sos, data)
-        return y
-    
-    # High-pass filter to focus on cymbal frequencies
-    y_high = highpass_filter(y, cutoff=5000, fs=sr)
-    
-    # Detect onsets in high-frequency content
-    onset_high = librosa.onset.onset_strength(y=y_high, sr=sr)
-    onset_high_frames = librosa.onset.onset_detect(
-        onset_envelope=onset_high,
-        sr=sr,
-        threshold=0.0001
-    )
-    
-    # Convert frames to times
-    onset_high_times = librosa.frames_to_time(onset_high_frames, sr=sr)
-    
-    # Add detected high-frequency onsets as events
-    for time in onset_high_times:
-        # Add as crash cymbals
-        events.append((time, "crash"))
-    
-    logging.info(f"Detected {len(onset_high_times)} high-frequency onsets")
-    
-    # 5. PATTERN INFILLING
-    # If the detection found less than ~800 events, fill in with pattern-based notes
-    if len(events) < 800:
-        logging.info(f"Detected only {len(events)} events, filling with pattern-based notes")
+    try:
+        import librosa
         
-        # Determine the note density needed
-        target_density = 800 / song_duration  # Notes per second
-        detected_density = len(events) / song_duration
+        # 1. EXTREMELY LOW THRESHOLD ONSET DETECTION
+        # Extract percussive component
+        y_harmonic, y_percussive = librosa.effects.hpss(y)
         
-        # How many pattern notes to add per second
-        notes_to_add_per_second = max(0, target_density - detected_density)
+        # Use an absurdly low threshold to catch nearly everything
+        onset_env = librosa.onset.onset_strength(y=y_percussive, sr=sr)
         
-        # Fill with 16th note patterns where detection is sparse
-        detected_times = [time for time, _ in events]
-        pattern_events = []
-        
-        # Add regular patterns between detected events
-        for i in range(int(song_duration * notes_to_add_per_second)):
-            time = i / notes_to_add_per_second
+        # Use multiple thresholds to get different levels of sensitivity
+        for threshold in [0.15, 0.25, 0.4]:  # From extremely sensitive to more moderate
+            onset_frames = librosa.onset.onset_detect(
+                onset_envelope=onset_env,
+                sr=sr,
+                threshold=threshold,
+                pre_max=0.02*sr//512,  # Shorter pre_max for more sensitivity
+                post_max=0.02*sr//512, # Shorter post_max for more sensitivity
+                pre_avg=0.05*sr//512,  # Shorter pre_avg for more sensitivity
+                post_avg=0.05*sr//512  # Shorter post_avg for more sensitivity
+            )
             
-            # Check if this time is far from any detected event
-            is_far = True
-            for detected_time in detected_times:
-                if abs(detected_time - time) < sixteenth_duration * 0.5:
-                    is_far = False
-                    break
+            onset_times = librosa.frames_to_time(onset_frames, sr=sr)
             
-            # If this time doesn't conflict with a detected event, add it
-            if is_far:
-                drum_type = "hihat" if i % 4 != 0 else ("kick" if i % 8 == 0 else "snare")
-                pattern_events.append((time, drum_type))
+            # Add these onsets to our events, with different types based on threshold
+            for t in onset_times:
+                # Low threshold = likely hihat or subtle sound
+                if threshold == 0.15:
+                    events.append((t, 'hihat'))
+                # Medium threshold = likely snare or mid-level hit
+                elif threshold == 0.25:
+                    events.append((t, 'snare'))
+                # Higher threshold = likely kick or strong hit
+                else:
+                    events.append((t, 'kick'))
         
-        # Add pattern events
-        events.extend(pattern_events)
-        logging.info(f"Added {len(pattern_events)} pattern-based events")
-    
-    # Sort all events by time
-    events.sort(key=lambda x: x[0])
-    
-    # 6. REMOVE EXCESSIVE DUPLICATION
-    # We want high density but not ridiculous duplication
-    cleaned_events = []
-    last_time = -1
-    
-    for time, drum_type in events:
-        # Only filter if notes are extremely close (less than 1/32nd note)
-        if last_time < 0 or time - last_time > sixteenth_duration * 0.5:
-            cleaned_events.append((time, drum_type))
-            last_time = time
-    
-    logging.info(f"Final event count after cleaning: {len(cleaned_events)}")
-    
-    return cleaned_events
+        # 2. MULTI-BAND DETECTION FOR DIFFERENT DRUM ELEMENTS
+        # Define frequency bands for different drum elements
+        bands = [
+            (20, 150),     # Kick drum
+            (150, 300),    # Low toms
+            (300, 800),    # Snare
+            (800, 1500),   # Mid toms
+            (1500, 4000),  # Hi-hats
+            (4000, 8000),  # Crashes/rides
+        ]
+        
+        # For each band, detect onsets and add them
+        for i, (low_freq, high_freq) in enumerate(bands):
+            # Filter to this frequency band
+            y_band = librosa.effects.remix(y, intervals=librosa.frequency_bands.frequency_filter(
+                y, sr, low_freq, high_freq))
+            
+            # Get onsets in this band with appropriate threshold
+            # Lower bands (kick) need higher thresholds
+            if i == 0:
+                threshold = 0.3
+            elif i == 1 or i == 2:
+                threshold = 0.25
+            else:
+                threshold = 0.2
+                
+            # Detect onsets
+            band_onset_env = librosa.onset.onset_strength(y=y_band, sr=sr)
+            band_onset_frames = librosa.onset.onset_detect(
+                onset_envelope=band_onset_env,
+                sr=sr,
+                threshold=threshold
+            )
+            
+            band_onset_times = librosa.frames_to_time(band_onset_frames, sr=sr)
+            
+            # Map band index to drum element type
+            if i == 0:
+                element_type = 'kick'
+            elif i == 1:
+                element_type = 'low_tom'
+            elif i == 2:
+                element_type = 'snare'
+            elif i == 3:
+                element_type = 'mid_tom'
+            elif i == 4:
+                element_type = 'hihat'
+            else:
+                element_type = 'crash'
+                
+            # Add these events
+            for t in band_onset_times:
+                events.append((t, element_type))
+        
+        # 3. BEAT-SYNCED GRID FILLING
+        # Find the beats
+        _, beat_frames = librosa.beat.beat_track(y=y, sr=sr, trim=False)
+        beat_times = librosa.frames_to_time(beat_frames, sr=sr)
+        
+        # For each beat, add notes on the grid
+        for beat_time in beat_times:
+            # Add on-beat note (usually kick or snare)
+            if beat_time % (beat_duration * 2) < beat_duration:
+                events.append((beat_time, 'kick'))
+            else:
+                events.append((beat_time, 'snare'))
+            
+            # Add 8th note hihat
+            events.append((beat_time, 'hihat'))
+            events.append((beat_time + beat_duration/2, 'hihat'))
+            
+            # Add some 16th note hihat
+            events.append((beat_time + sixteenth_duration, 'hihat'))
+            events.append((beat_time + sixteenth_duration*3, 'hihat'))
+        
+        # 4. ADD CRASH CYMBALS AT KEY POINTS
+        # Usually crashes happen every 8 or 16 beats (every 2 or 4 measures)
+        for i, beat_time in enumerate(beat_times):
+            if i % 16 == 0:  # Every 4 measures
+                events.append((beat_time, 'crash'))
+        
+        # 5. ADD OCCASIONAL DOUBLE-KICKS AND GHOST NOTES
+        # For each kick, sometimes add another kick shortly after
+        for time, type in list(events):
+            if type == 'kick':
+                # 20% chance of double kick
+                if random.random() < 0.2:
+                    events.append((time + sixteenth_duration/2, 'kick'))
+            
+            # For each snare, sometimes add ghost note before
+            if type == 'snare':
+                # 15% chance of ghost note
+                if random.random() < 0.15:
+                    events.append((time - sixteenth_duration/2, 'snare'))
+        
+        # Sort all events by time
+        events.sort(key=lambda x: x[0])
+        
+        logger.info(f"Generated {len(events)} high-density events")
+        return events
+        
+    except Exception as e:
+        logger.error(f"Error generating high-density events: {e}")
+        # Return fallback pattern using beat_duration if calculated
+        try:
+            fallback_events = []
+            # Generate a simple 16th note grid pattern
+            current_time = 3.0  # Start at 3 seconds
+            while current_time < song_duration:
+                tick = int((current_time - 3.0) / sixteenth_duration)
+                
+                # Every beat (every 4 16th notes)
+                if tick % 4 == 0:
+                    if (tick // 4) % 2 == 0:
+                        fallback_events.append((current_time, 'kick'))
+                    else:
+                        fallback_events.append((current_time, 'snare'))
+                    fallback_events.append((current_time, 'hihat'))
+                else:
+                    # Off beats
+                    fallback_events.append((current_time, 'hihat'))
+                    
+                    # Sometimes add extra elements
+                    if tick % 4 == 2:
+                        # Add kick on the "and" of the beat sometimes
+                        if (tick // 4) % 4 == 0 or (tick // 4) % 4 == 2:
+                            fallback_events.append((current_time, 'kick'))
+                            
+                current_time += sixteenth_duration
+                
+            return fallback_events
+        except:
+            # If all else fails, return empty and let the CSV writer handle it
+            return []
 
 def write_high_density_notes_csv(events, song_duration, tempo, output_path):
-    """Write the high-density events to a CSV file in Drums Rock format"""
+    """
+    Write the generated high density events to a notes.csv file.
+    Handles note spacing, color assignment, and making sure output is playable.
+    """
     try:
-        # Map drum types to enemy types and colors
-        drum_to_enemy_type = {
-            "kick": 1,
-            "snare": 1, 
-            "hihat": 1,
-            "crash": 2,
-            "ride": 3
-        }
-        
-        drum_to_aux = {
-            "kick": 7,
-            "snare": 7,
-            "hihat": 6,
-            "crash": 5,
-            "ride": 5
-        }
-        
-        drum_to_colors = {
-            "kick": (2, 2),
-            "snare": (2, 2),
-            "hihat": (1, 1),
-            "crash": (5, 6),
-            "ride": (2, 4)
-        }
-        
+        # Start writing CSV
         with open(output_path, 'w', newline='') as f:
             writer = csv.writer(f)
             
             # Header row
             writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
             
-            # Process each event
-            for time, drum_type in events:
-                # Skip if beyond song duration
-                if time >= song_duration:
-                    continue
-                    
-                enemy_type = drum_to_enemy_type.get(drum_type, 1)
-                aux = drum_to_aux.get(drum_type, 7)
-                color1, color2 = drum_to_colors.get(drum_type, (2, 2))
+            # The minimum spacing between consecutive notes
+            # This is to ensure playability - notes that are too close are difficult to hit
+            min_spacing = 0.08  # 80ms minimum spacing
+            
+            # Start at 3.0s to match MIDI reference
+            start_offset = 3.0
+            
+            # Previous note time for spacing check
+            prev_note_time = 0
+            
+            # Keep track of written notes
+            note_count = 0
+            
+            # For empty events list, generate a basic dense pattern
+            if not events:
+                beat_duration = 60 / tempo 
+                sixteenth_duration = beat_duration / 4
                 
-                # Write to CSV
-                writer.writerow([
-                    f"{time:.2f}",
-                    str(enemy_type),
-                    str(color1),
-                    str(color2),
-                    "1",
-                    "",
-                    str(aux)
-                ])
+                current_time = start_offset
+                while current_time < song_duration:
+                    writer.writerow([
+                        f"{current_time:.2f}",
+                        "1",
+                        "1",
+                        "1", 
+                        "1",
+                        "",
+                        "6"
+                    ])
+                    note_count += 1
+                    current_time += sixteenth_duration
+                    
+                logger.warning("Using fallback 16th note grid pattern")
+                logger.info(f"Generated {note_count} notes")
+                return True
+            
+            # Process events
+            for time, element_type in events:
+                # Only use events after start_offset
+                if time >= start_offset and time < song_duration:
+                    # Check if we have enough spacing to add this note
+                    if time - prev_note_time >= min_spacing:
+                        # Map element type to note properties
+                        if element_type == 'kick':
+                            enemy_type, color1, color2, aux = 1, 2, 2, 7
+                        elif element_type == 'snare':
+                            enemy_type, color1, color2, aux = 1, 2, 2, 7
+                        elif element_type == 'hihat':
+                            enemy_type, color1, color2, aux = 1, 1, 1, 6
+                        elif element_type == 'crash':
+                            enemy_type, color1, color2, aux = 2, 5, 6, 5
+                        elif element_type == 'low_tom':
+                            enemy_type, color1, color2, aux = 1, 3, 3, 7
+                        elif element_type == 'mid_tom':
+                            enemy_type, color1, color2, aux = 1, 4, 4, 7
+                        else:  # Default to hihat for unknown types
+                            enemy_type, color1, color2, aux = 1, 1, 1, 6
+                        
+                        # Round time to 2 decimal places for consistency
+                        rounded_time = round(time, 2)
+                        
+                        # Write the note
+                        writer.writerow([
+                            f"{rounded_time:.2f}",
+                            str(enemy_type),
+                            str(color1),
+                            str(color2),
+                            "1",
+                            "",
+                            str(aux)
+                        ])
+                        
+                        # Update previous note time for spacing check
+                        prev_note_time = time
+                        note_count += 1
+            
+            # If we somehow didn't generate any notes, add a basic pattern
+            if note_count == 0:
+                logger.warning("No valid events generated, using basic pattern")
+                beat_duration = 60 / tempo
+                current_time = start_offset
+                
+                while current_time < song_duration:
+                    writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])  # Hihat
+                    current_time += beat_duration / 2  # 8th notes
+                    note_count += 1
+            
+            logger.info(f"Generated {note_count} high-density notes")
         
         return True
+        
     except Exception as e:
-        logging.error(f"Failed to write high-density notes: {str(e)}")
+        logger.error(f"Error writing high-density notes CSV: {str(e)}")
         return False
 
 def generate_dense_pattern_csv(song_path, output_path, song_duration=180.0):
-    """Generate a dense pattern as fallback"""
+    """
+    Generate a dense pattern without detailed audio analysis.
+    Used as a fallback when librosa is not available or analysis fails.
+    """
     try:
-        # Try to get actual duration
+        # Estimate duration and tempo if possible
         try:
             import librosa
             y, sr = librosa.load(song_path, sr=None)
@@ -305,50 +391,93 @@ def generate_dense_pattern_csv(song_path, output_path, song_duration=180.0):
         except:
             tempo = 120  # Default tempo
         
+        # Get time between beats
+        beat_duration = 60 / tempo
+        
+        # For high density, use 16th notes 
+        note_spacing = beat_duration / 4
+        
         with open(output_path, 'w', newline='') as f:
             writer = csv.writer(f)
             
             # Header row
             writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
             
-            # Calculate 16th note duration
-            beat_duration = 60 / tempo
-            sixteenth_duration = beat_duration / 4
+            # Start at 3.0s to match MIDI reference
+            current_time = 3.0
             
-            # Generate very dense pattern (16th notes)
-            current_time = 0.0
+            # Generate beats until the end of the song
+            beat_count = 0
+            measure = 0
+            note_count = 0
             
             while current_time < song_duration:
-                # Every beat (quarter note)
-                if current_time % beat_duration < 0.01:
-                    # Downbeat (every 4 beats)
-                    if int(current_time / beat_duration) % 4 == 0:
+                # Calculate position in measure (0-15 for 16th notes in a 4/4 measure)
+                pos_in_measure = beat_count % 16
+                
+                # On quarter notes (every 4 16th notes)
+                if pos_in_measure % 4 == 0:
+                    # Beat 1 and 3: kick + hihat + sometimes crash
+                    if pos_in_measure == 0 or pos_in_measure == 8:
                         writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])  # Kick
-                        writer.writerow([f"{current_time:.2f}", "2", "5", "6", "1", "", "5"])  # Crash
-                    # Beat 3
-                    elif int(current_time / beat_duration) % 4 == 2:
-                        writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])  # Kick
-                    # Beats 2 and 4
+                        writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])  # Hihat
+                        note_count += 2
+                        
+                        # Add crash at start of each 2-measure phrase
+                        if pos_in_measure == 0 and measure % 2 == 0:
+                            writer.writerow([f"{current_time:.2f}", "2", "5", "6", "1", "", "5"])  # Crash
+                            note_count += 1
+                    
+                    # Beat 2 and 4: snare + hihat
                     else:
                         writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])  # Snare
-                # Every 16th note gets a hihat
-                writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])  # Hihat
+                        writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])  # Hihat
+                        note_count += 2
                 
-                # Advance by 16th note
-                current_time += sixteenth_duration
+                # On 8th notes (every 2 16th notes) 
+                elif pos_in_measure % 2 == 0:
+                    writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])  # Hihat
+                    
+                    # Sometimes add kick drum on "and" of beat 1 or 3
+                    if pos_in_measure == 4 or pos_in_measure == 12:
+                        # 50% chance
+                        if beat_count % 4 == 0:
+                            writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])  # Kick
+                            note_count += 1
+                    
+                    note_count += 1
+                
+                # On 16th notes (all other positions)
+                else:
+                    # Add hihat on every 16th note for high density
+                    writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])  # Hihat
+                    note_count += 1
+                    
+                    # Occasionally add ghost snare notes
+                    if pos_in_measure == 7 or pos_in_measure == 15:
+                        # 30% chance
+                        if beat_count % 3 == 0:
+                            writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])  # Ghost Snare
+                            note_count += 1
+                
+                # Move to next 16th note
+                current_time += note_spacing
+                beat_count += 1
+                
+                # Every 16 16th-notes is a measure
+                if beat_count % 16 == 0:
+                    measure += 1
         
-        logging.info(f"Generated dense fallback pattern at {output_path}")
+        logger.info(f"Generated dense pattern with {note_count} notes at {output_path}")
         return True
+        
     except Exception as e:
-        logging.error(f"Failed to generate dense fallback pattern: {str(e)}")
+        logger.error(f"Failed to generate dense pattern CSV: {str(e)}")
         return False
 
 if __name__ == "__main__":
     import sys
-    
     if len(sys.argv) > 2:
-        song_path = sys.argv[1]
-        output_path = sys.argv[2]
-        generate_notes_csv(song_path, None, output_path)
+        generate_notes_csv(sys.argv[1], None, sys.argv[2])
     else:
         print("Usage: python high_density_notes_generator.py song_path output_path")

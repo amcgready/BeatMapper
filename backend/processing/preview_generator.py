@@ -1,9 +1,10 @@
 import os
 import logging
-from pydub import AudioSegment
 import csv
+from pydub import AudioSegment
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def generate_preview(input_path, output_path, start_sec=30, duration_sec=30):
     """
@@ -19,17 +20,17 @@ def generate_preview(input_path, output_path, start_sec=30, duration_sec=30):
         bool: True if successful, False otherwise
     """
     try:
-        logging.info(f"Generating preview from {input_path} to {output_path}")
-        logging.info(f"Starting at {start_sec}s for {duration_sec}s duration")
+        logger.info(f"Generating preview from {input_path} to {output_path}")
+        logger.info(f"Starting at {start_sec}s for {duration_sec}s duration")
         
         # Ensure the input file exists
         if not os.path.exists(input_path):
-            logging.error(f"Input file does not exist: {input_path}")
+            logger.error(f"Input file does not exist: {input_path}")
             return False
             
         # Load the audio file
         audio = AudioSegment.from_file(input_path)
-        logging.info(f"Loaded audio file: {len(audio)/1000}s duration")
+        logger.info(f"Loaded audio file: {len(audio)/1000}s duration")
         
         # Calculate positions in milliseconds
         start_ms = start_sec * 1000
@@ -37,7 +38,7 @@ def generate_preview(input_path, output_path, start_sec=30, duration_sec=30):
         
         # If audio is shorter than start position, start from beginning
         if len(audio) <= start_ms:
-            logging.warning(f"Audio is shorter than start position. Using beginning of track.")
+            logger.warning(f"Audio file is shorter than start position ({len(audio)/1000}s < {start_sec}s)")
             start_ms = 0
             
         # Calculate end position, ensuring we don't go beyond the audio length
@@ -45,174 +46,160 @@ def generate_preview(input_path, output_path, start_sec=30, duration_sec=30):
         
         # Extract the preview segment
         preview = audio[start_ms:end_ms]
-        logging.info(f"Extracted preview segment: {len(preview)/1000}s")
+        logger.info(f"Extracted preview segment: {len(preview)/1000}s")
         
-        # If preview is too short, pad it or use what we have
-        if len(preview) < 5000:  # Less than 5 seconds
-            logging.warning(f"Preview is very short: {len(preview)/1000}s. Using available audio.")
-            preview = audio[:min(duration_ms, len(audio))]
-            
-        # Fade in/out for smoother transitions
-        fade_duration = min(1000, len(preview) // 2)  # 1 second fade or half the preview length
-        preview = preview.fade_in(fade_duration).fade_out(fade_duration)
+        # Create output directory if it doesn't exist
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
-        # Save the preview
-        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-        preview.export(output_path, format="ogg", parameters=["-q:a", "4"])
-        logging.info(f"Preview saved to {output_path}")
+        # Export the preview
+        preview.export(output_path, format="ogg")
+        logger.info(f"Preview saved to {output_path}")
         
         return True
         
     except Exception as e:
-        logging.error(f"Error generating preview: {str(e)}")
-        
-        # Fallback: If generation fails, try to create a simpler preview
-        try:
-            logging.info("Attempting fallback preview generation")
-            audio = AudioSegment.from_file(input_path)
-            
-            # Take the first minute or less if the file is shorter
-            preview_length = min(60 * 1000, len(audio))
-            preview = audio[:preview_length]
-            
-            # Save it
-            preview.export(output_path, format="ogg")
-            logging.info(f"Fallback preview saved to {output_path}")
-            return True
-        except Exception as fallback_error:
-            logging.error(f"Fallback preview generation failed: {str(fallback_error)}")
-            
-            # Last resort: Try to make a copy of the original file
-            try:
-                import shutil
-                shutil.copy(input_path, output_path)
-                logging.info(f"Last resort: Copied original file as preview")
-                return True
-            except Exception as copy_error:
-                logging.error(f"Failed to copy original file as preview: {str(copy_error)}")
-                return False
+        logger.error(f"Failed to generate preview: {str(e)}")
+        return False
 
 def generate_notes_csv(song_path, template_path, output_path):
     """
     Generate a notes.csv file that matches the Drums Rock template format
+    
+    Args:
+        song_path: Path to the audio file
+        template_path: Path to a template file (optional)
+        output_path: Path to save the notes.csv file
+        
+    Returns:
+        bool: True if successful, False otherwise
     """
     try:
-        logging.info(f"Generating Drums Rock-compatible notes for {os.path.basename(song_path)}")
+        logger.info(f"Generating notes.csv for preview: {os.path.basename(song_path)}")
         
-        # Define default tempo - ideally this would be detected from the audio
-        tempo = 120  # Default BPM
+        # Try to use our existing note generator
+        try:
+            from .note_generator import generate_notes_for_song
+            logger.info("Using note_generator for preview notes generation")
+            return generate_notes_for_song(
+                song_path=song_path,
+                output_path=output_path,
+                template_path=template_path,
+                generator_type="standard"
+            )
+        except ImportError:
+            # Fallback to direct import of pattern generator
+            try:
+                from .pattern_notes_generator import generate_notes_csv as pattern_generate
+                logger.info("Using pattern_notes_generator directly")
+                return pattern_generate(song_path, template_path, output_path)
+            except ImportError:
+                logger.warning("Could not import generators, using basic pattern")
         
+        # Fallback to a simple pattern if no generators are available
         with open(output_path, 'w', newline='') as f:
             writer = csv.writer(f)
+            # Write header (time, note_type, enemy_type, color1, color2, aux)
+            writer.writerow(["time", "note", "enemy", "color1", "color2", "aux"])
             
-            # Header row - match the template exactly
-            writer.writerow([
-                "Section", "Tempo [BPM]", "Beat", "Time", 
-                "Lane", "Type", "Length", "Volume", "Pitch", "Effect",
-                "Aux", "Enemy Type", "Number of Enemies"
-            ])
+            # Create a simple pattern for the preview
+            song_duration = 30  # Default to 30 seconds for preview
+            pattern_duration = 2.0  # 2 seconds per pattern
+            current_time = 0.0
             
-            # Generate a basic rock beat pattern over multiple sections
-            section_names = ["Intro", "Verse", "Chorus", "Bridge", "Outro"]
-            current_section = 0
-            total_beats = 0
-            
-            # Generate patterns for 30 measures (120 beats at 4 beats per measure)
-            for measure in range(30):
-                # Change section every 8 measures
-                if measure % 8 == 0 and measure > 0:
-                    current_section = (current_section + 1) % len(section_names)
+            while current_time < song_duration:
+                # Basic kick drum on 1 and 3
+                writer.writerow([round(current_time, 2), "kick", 1, 1, 3, 1])
+                writer.writerow([round(current_time + 1.0, 2), "kick", 1, 1, 3, 1])
                 
-                section = section_names[current_section]
+                # Snare on 2 and 4
+                writer.writerow([round(current_time + 0.5, 2), "snare", 1, 2, 4, 1])
+                writer.writerow([round(current_time + 1.5, 2), "snare", 1, 2, 4, 1])
                 
-                # 4 beats per measure
-                for beat in range(4):
-                    beat_number = total_beats + beat
-                    # Calculate time in seconds (60 / BPM * beat_number)
-                    time = (60 / tempo) * beat_number
-                    
-                    # Basic rock pattern
-                    
-                    # KICK DRUM (Lane 0)
-                    if beat == 0 or beat == 2:  # On beats 1 and 3
-                        writer.writerow([
-                            section,       # Section
-                            tempo,         # Tempo [BPM]
-                            beat_number,   # Beat
-                            f"{time:.3f}", # Time
-                            "0",           # Lane
-                            "Tap",         # Type
-                            "0",           # Length
-                            "100",         # Volume
-                            "Kick",        # Pitch
-                            "None",        # Effect
-                            "",            # Aux
-                            "",            # Enemy Type
-                            ""             # Number of Enemies
-                        ])
-                    
-                    # SNARE DRUM (Lane 1)
-                    if beat == 1 or beat == 3:  # On beats 2 and 4
-                        writer.writerow([
-                            section,       # Section
-                            tempo,         # Tempo [BPM]
-                            beat_number,   # Beat
-                            f"{time:.3f}", # Time
-                            "1",           # Lane
-                            "Tap",         # Type
-                            "0",           # Length
-                            "100",         # Volume
-                            "Snare",       # Pitch
-                            "None",        # Effect
-                            "",            # Aux
-                            "",            # Enemy Type
-                            ""             # Number of Enemies
-                        ])
-                    
-                    # HI-HAT (Lane 2)
-                    # Eighth notes - on every half beat
-                    for eighth in range(2):
-                        eighth_time = time + (eighth * 0.5 * (60 / tempo))
-                        writer.writerow([
-                            section,                # Section
-                            tempo,                  # Tempo [BPM]
-                            f"{beat_number}.{eighth}", # Beat (with subdivision)
-                            f"{eighth_time:.3f}",   # Time
-                            "2",                    # Lane
-                            "Tap",                  # Type
-                            "0",                    # Length
-                            "85",                   # Volume
-                            "HiHat",                # Pitch
-                            "None",                 # Effect
-                            "",                     # Aux
-                            "",                     # Enemy Type
-                            ""                      # Number of Enemies
-                        ])
-                    
-                    # CRASH/TOM (Lane 3)
-                    # Add crash on the first beat of every 4 measures
-                    if beat == 0 and measure % 4 == 0:
-                        writer.writerow([
-                            section,       # Section
-                            tempo,         # Tempo [BPM]
-                            beat_number,   # Beat
-                            f"{time:.3f}", # Time
-                            "3",           # Lane
-                            "Tap",         # Type
-                            "0",           # Length
-                            "100",         # Volume
-                            "Crash",       # Pitch
-                            "None",        # Effect
-                            "",            # Aux
-                            "",            # Enemy Type
-                            ""             # Number of Enemies
-                        ])
+                # Hi-hats on eighth notes
+                for i in range(8):
+                    writer.writerow([round(current_time + i*0.25, 2), "hihat", 1, 3, 5, 1])
                 
-                total_beats += 4  # Increment beat counter by 4 for next measure
+                # Add crash at the beginning
+                if current_time == 0.0:
+                    writer.writerow([0.0, "crash", 2, 5, 6, 5])
+                
+                current_time += pattern_duration
         
-        logging.info(f"Generated Drums Rock compatible notes.csv at {output_path}")
+        logger.info(f"Generated simple notes.csv for preview at {output_path}")
         return True
         
     except Exception as e:
-        logging.error(f"Failed to generate notes.csv: {str(e)}")
+        logger.error(f"Failed to generate notes.csv for preview: {str(e)}")
         return False
+
+def generate_preview_package(song_path, output_dir=None, start_sec=30, duration_sec=30):
+    """
+    Generate a complete preview package with both audio and notes.csv
+    
+    Args:
+        song_path: Path to the input audio file
+        output_dir: Directory to save the preview files (defaults to song directory)
+        start_sec: Start position in seconds
+        duration_sec: Duration in seconds
+        
+    Returns:
+        tuple: (success, preview_audio_path, preview_notes_path)
+    """
+    try:
+        # If output_dir is not specified, use the song directory
+        if not output_dir:
+            output_dir = os.path.dirname(song_path)
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Define output paths
+        song_name = os.path.splitext(os.path.basename(song_path))[0]
+        preview_audio_path = os.path.join(output_dir, f"{song_name}_preview.ogg")
+        preview_notes_path = os.path.join(output_dir, f"{song_name}_notes.csv")
+        
+        # Generate audio preview
+        audio_success = generate_preview(song_path, preview_audio_path, start_sec, duration_sec)
+        
+        # Generate notes.csv
+        notes_success = generate_notes_csv(song_path, None, preview_notes_path)
+        
+        success = audio_success and notes_success
+        
+        if success:
+            logger.info(f"Preview package generated successfully")
+        else:
+            logger.error("Failed to generate complete preview package")
+            
+        return (success, preview_audio_path, preview_notes_path)
+        
+    except Exception as e:
+        logger.error(f"Failed to generate preview package: {str(e)}")
+        return (False, None, None)
+
+if __name__ == "__main__":
+    import argparse
+        
+    parser = argparse.ArgumentParser(description="Generate audio previews for songs")
+    parser.add_argument("input_path", help="Path to the input audio file")
+    parser.add_argument("output_path", help="Path to save the preview audio file")
+    parser.add_argument("--start", type=float, default=30.0, help="Start position in seconds (default: 30s)")
+    parser.add_argument("--duration", type=float, default=30.0, help="Duration of preview in seconds (default: 30s)")
+    parser.add_argument("--package", action="store_true", help="Generate a complete preview package with notes.csv")
+    
+    args = parser.parse_args()
+    
+    if args.package:
+        success, audio_path, notes_path = generate_preview_package(
+            args.input_path, 
+            os.path.dirname(args.output_path),
+            args.start, 
+            args.duration
+        )
+        if success:
+            print(f"Preview package generated successfully:")
+            print(f" - Audio: {audio_path}")
+            print(f" - Notes: {notes_path}")
+    else:
+        if generate_preview(args.input_path, args.output_path, args.start, args.duration):
+            print(f"Preview generated successfully: {args.output_path}")

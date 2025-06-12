@@ -15,6 +15,9 @@ scipy==1.8.0
 soundfile==0.10.3.post1
 scikit-learn==1.0.2
 mutagen==1.45.1
+# Optional advanced audio analysis (may require special installation)
+# madmom>=0.16.1
+# spleeter>=2.3.0
 
 # File handling
 Pillow==9.5.0

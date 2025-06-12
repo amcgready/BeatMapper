@@ -1,250 +1,181 @@
+"""
+Standard notes generator that uses audio analysis to detect drum hits and create appropriate patterns.
+"""
 import os
 import csv
-import logging
-import random
-import warnings
-import tempfile
-import shutil
-import subprocess
 import sys
-import numpy as np
+import logging
+import warnings
 from pathlib import Path
+import random
+
+try:
+    import numpy as np
+except ImportError:
+    logging.warning("NumPy not available - falling back to basic pattern")
+    # Define minimal numpy functionality needed
+    class NumpyStub:
+        def ceil(self, x):
+            return int(x) + (1 if x > int(x) else 0)
+        
+        def mean(self, x, *args, **kwargs):
+            if not x:
+                return 0
+            return sum(x) / len(x)
+        
+        def median(self, x, *args, **kwargs):
+            if not x:
+                return 0
+            sorted_x = sorted(x)
+            mid = len(sorted_x) // 2
+            return sorted_x[mid]
+            
+    np = NumpyStub()
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def generate_notes_csv(song_path, template_path, output_path):
     """
-    Generate a notes.csv file with enemy spawns synchronized to the detected beat of the song.
-    Maps different drum types to specific lanes.
+    Generate notes based on audio analysis and beat detection.
+    This is the standard generator that balances accuracy and performance.
+    
+    Args:
+        song_path: Path to the audio file
+        template_path: Optional path to a template file (not used currently)
+        output_path: Path where the notes.csv will be saved
+        
+    Returns:
+        bool: True if successful, False otherwise
     """
     try:
-        logging.info(f"Generating Drums Rock-compatible notes for {os.path.basename(song_path)}")
+        logger.info(f"Generating standard drum notes for {os.path.basename(song_path)}")
         
-        # Try drum separation with Spleeter first - IMPROVED
-        drum_track = try_extract_drums_with_spleeter(song_path)
-        
-        # Use the drum track if available, otherwise use original song
-        audio_for_analysis = drum_track if drum_track else song_path
-        
-        # Try advanced beat detection with librosa
+        # Check if we can use librosa for analysis
         try:
             import librosa
-            import numpy as np
-                        
-            logging.info("Using pattern-based drum analysis")
             
             # Suppress warnings from librosa
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 
                 # Load the audio file
-                y, sr = librosa.load(audio_for_analysis, sr=None)
+                y, sr = librosa.load(song_path, sr=None)
                 
                 # Get song duration
                 song_duration = librosa.get_duration(y=y, sr=sr)
-                logging.info(f"Song duration: {song_duration:.2f} seconds")
+                logger.info(f"Song duration: {song_duration:.2f} seconds")
                 
                 # Detect the tempo
                 tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-                logging.info(f"Detected tempo: {tempo:.2f} BPM")
+                logger.info(f"Detected tempo: {tempo:.2f} BPM")
                 
-                # Use our advanced beat detection with debug info
-                logging.info("Starting drum detection...")
-                optimized_bands = fine_tune_frequency_bands(audio_for_analysis)
+                # Try to extract drums using spleeter if available
+                drums_y = try_extract_drums_with_spleeter(song_path)
+                if drums_y is not None:
+                    logger.info("Using isolated drum track for better detection")
+                    y_for_analysis = drums_y
+                else:
+                    # If spleeter not available, use percussive component
+                    y_harmonic, y_percussive = librosa.effects.hpss(y)
+                    y_for_analysis = y_percussive
                 
-                # THIS IS THE CRITICAL LINE - Ensure it's called correctly
-                success = generate_drum_synced_notes(y, sr, song_duration, tempo, beats, output_path, optimized_bands)
+                # Detect bands for multi-band analysis
+                optimized_bands = [
+                    (20, 120),    # Kick drum
+                    (120, 300),   # Low toms
+                    (300, 1000),  # Snare/mid toms
+                    (1000, 4000), # Hi-hats/cymbals
+                    (4000, 8000), # Rides/crashes
+                ]
                 
-                if not success:
-                    logging.warning("Drum detection failed, falling back to basic pattern")
-                    return generate_fixed_basic_notes_csv(output_path, song_duration)
+                # Generate notes based on detected beats and audio analysis
+                success = generate_drum_synced_notes(
+                    y_for_analysis, sr, song_duration, tempo, beats, 
+                    output_path, optimized_bands
+                )
                 
-                return success
-            
+                if success:
+                    logger.info(f"Successfully generated notes.csv at {output_path}")
+                    return True
+                
         except ImportError:
-            logging.warning("Librosa not available, falling back to basic tempo estimation")
-            return generate_basic_notes_csv(song_path, output_path)
+            logger.warning("Could not import librosa, falling back to adaptive basic pattern")
         except Exception as e:
-            logging.error(f"Advanced drum detection failed: {str(e)}", exc_info=True)
-            logging.warning("Falling back to basic tempo estimation")
-            return generate_basic_notes_csv(song_path, output_path)
-            
+            logger.error(f"Error with audio analysis: {str(e)}")
+        
+        # Fallback to adaptive basic pattern
+        return generate_adaptive_basic_pattern(song_path, output_path)
+        
     except Exception as e:
-        logging.error(f"Failed to generate notes.csv: {str(e)}", exc_info=True)
+        logger.error(f"Failed to generate notes.csv: {str(e)}")
         return False
 
 def try_extract_drums_with_spleeter(song_path):
     """
-    Try to extract drum track using Spleeter in an isolated environment.
-    Returns path to drum track if successful, None otherwise.
+    Try to extract drums from the audio file using spleeter if available.
+    Returns isolated drum track or None if not available.
     """
     try:
-        logging.info("Attempting to extract drums with Spleeter...")
+        # First check if spleeter is installed
+        import spleeter
+        from spleeter.separator import Separator
+        import tempfile
+        import librosa
         
-        # Create a temporary directory for output
-        temp_dir = tempfile.mkdtemp(prefix="spleeter_")
-        output_dir = os.path.join(temp_dir, "output")
-        os.makedirs(output_dir, exist_ok=True)
+        logger.info("Spleeter found, attempting to isolate drums")
         
-        # Path for the extracted drum track
-        drum_track_path = os.path.join(temp_dir, "drums.wav") 
+        # Create temporary directory for spleeter output
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Initialize the separator
+            separator = Separator('spleeter:4stems')
+            
+            # Process the audio file
+            separator.separate_to_file(song_path, temp_dir)
+            
+            # Get the base name of the file without extension
+            base_name = os.path.splitext(os.path.basename(song_path))[0]
+            
+            # Load the isolated drums
+            drums_path = os.path.join(temp_dir, base_name, 'drums.wav')
+            if os.path.exists(drums_path):
+                drums_y, sr = librosa.load(drums_path, sr=None)
+                logger.info("Successfully isolated drum track")
+                return drums_y
         
-        # IMPROVED: Try direct pip install first as it's more reliable
-        try:
-            # First check if spleeter is already installed in the current environment
-            try:
-                subprocess.run(
-                    [sys.executable, "-c", "import spleeter"], 
-                    check=True, 
-                    stderr=subprocess.DEVNULL, 
-                    stdout=subprocess.DEVNULL
-                )
-                spleeter_installed = True
-                logging.info("Spleeter is already installed in the current environment")
-            except subprocess.SubprocessError:
-                spleeter_installed = False
-                
-            # If not installed, try installing it
-            if not spleeter_installed:
-                logging.info("Installing Spleeter in current environment...")
-                subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "spleeter==2.3.0", "--no-cache-dir"],
-                    check=True,
-                    stdout=subprocess.PIPE
-                )
-            
-            # Run Spleeter directly in current environment
-            song_basename = os.path.splitext(os.path.basename(song_path))[0]
-            subprocess.run(
-                [sys.executable, "-m", "spleeter.separator", "separate", 
-                 "-p", "spleeter:5stems", "-o", output_dir, song_path],
-                check=True,
-                stdout=subprocess.PIPE
-            )
-            
-            # Copy the drum track to our temporary location
-            src_drum_path = os.path.join(output_dir, song_basename, "drums.wav")
-            if os.path.exists(src_drum_path):
-                shutil.copy(src_drum_path, drum_track_path)
-                logging.info(f"Drum track extracted to {drum_track_path}")
-                return drum_track_path
-                
-        except Exception as e:
-            logging.warning(f"Failed to extract drums with direct pip: {str(e)}")
-            
-            # Try with conda as fallback
-            try:
-                # Check if conda is available
-                subprocess.run(["conda", "--version"], check=True, capture_output=True)
-                
-                # Use conda to create an isolated environment for Spleeter
-                env_name = "spleeter_env"
-                
-                # Check if environment already exists
-                result = subprocess.run(["conda", "env", "list"], capture_output=True, text=True)
-                if env_name not in result.stdout:
-                    logging.info("Creating conda environment for Spleeter...")
-                    subprocess.run([
-                        "conda", "create", "-n", env_name, 
-                        "python=3.7", "ffmpeg", "libsndfile", "-y"
-                    ], check=True)
-                
-                # Install Spleeter in the environment
-                logging.info("Installing Spleeter...")
-                subprocess.run([
-                    "conda", "run", "-n", env_name,
-                    "pip", "install", "spleeter==2.3.0"
-                ], check=True)
-                
-                # Run Spleeter in the environment
-                logging.info("Running Spleeter for drum extraction...")
-                subprocess.run([
-                    "conda", "run", "-n", env_name,
-                    "spleeter", "separate", "-p", "spleeter:5stems", 
-                    "-o", output_dir, song_path
-                ], check=True)
-                
-                # Copy the drum track to our temporary location
-                song_basename = os.path.splitext(os.path.basename(song_path))[0]
-                src_drum_path = os.path.join(output_dir, song_basename, "drums.wav")
-                if os.path.exists(src_drum_path):
-                    shutil.copy(src_drum_path, drum_track_path)
-                    logging.info(f"Drum track extracted to {drum_track_path}")
-                    return drum_track_path
-                    
-            except Exception as conda_err:
-                logging.warning(f"Failed to extract drums with conda: {str(conda_err)}")
-        
-        # Attempt third method - use a Python virtual environment
-        try:
-            # Create a virtualenv
-            venv_dir = os.path.join(temp_dir, "venv")
-            subprocess.run([sys.executable, "-m", "venv", venv_dir], check=True)
-            
-            # Get the pip and python path
-            if os.name == 'nt':  # Windows
-                pip_path = os.path.join(venv_dir, "Scripts", "pip.exe")
-                python_path = os.path.join(venv_dir, "Scripts", "python.exe")
-            else:  # Unix/Linux/Mac
-                pip_path = os.path.join(venv_dir, "bin", "pip")
-                python_path = os.path.join(venv_dir, "bin", "python")
-            
-            # Install Spleeter
-            subprocess.run([pip_path, "install", "spleeter==2.3.0"], check=True)
-            
-            # Run Spleeter
-            subprocess.run([
-                python_path, "-m", "spleeter.separator", 
-                "separate", "-p", "spleeter:5stems", "-o", output_dir, song_path
-            ], check=True)
-            
-            # Copy the drum track
-            song_basename = os.path.splitext(os.path.basename(song_path))[0]
-            src_drum_path = os.path.join(output_dir, song_basename, "drums.wav")
-            if os.path.exists(src_drum_path):
-                shutil.copy(src_drum_path, drum_track_path)
-                logging.info(f"Drum track extracted to {drum_track_path}")
-                return drum_track_path
-                
-        except Exception as venv_err:
-            logging.warning(f"Failed to extract drums with venv: {str(venv_err)}")
-        
-        # Clean up if we couldn't extract drums
-        try:
-            shutil.rmtree(temp_dir)
-        except:
-            pass
-        
-        logging.warning("Could not extract drums with Spleeter, continuing with original audio")
+        logger.warning("Failed to isolate drums with spleeter")
         return None
         
+    except ImportError:
+        logger.info("Spleeter not available, using full mix for analysis")
+        return None
     except Exception as e:
-        logging.warning(f"Failed to extract drums with Spleeter: {str(e)}")
+        logger.warning(f"Error using spleeter: {str(e)}")
         return None
 
-def generate_pattern_based_notes(y, sr, tempo, beats, song_duration, output_path):
+def generate_drum_synced_notes(y, sr, song_duration, tempo, beats, output_path, optimized_bands=None):
     """
-    Generate notes based on detected patterns rather than individual hits.
-    This is a new approach that focuses on pattern recognition.
+    Generate notes based on detected beats and multi-band analysis.
+    This is the main algorithm for the standard generator.
     """
     try:
         import librosa
         
-        # Extract percussive component
-        y_harmonic, y_percussive = librosa.effects.hpss(y)
+        # Convert beats from frames to time
+        beat_times = librosa.frames_to_time(beats, sr=sr)
         
-        # Get tempo in seconds per beat
+        # Get seconds per beat
         spb = 60 / tempo
         
-        # Calculate segment length (2 measures in 4/4 time)
-        segment_length = 8 * spb  # 8 beats = 2 measures
+        # Detect onsets with multiple band approach
+        onsets_by_band = multi_band_onset_detection(y, sr, optimized_bands)
         
-        # Create drum patterns library
-        drum_patterns = create_drum_patterns(spb)
+        # Calculate adaptive thresholds based on audio characteristics
+        threshold = calculate_adaptive_threshold(y, sr, tempo)
         
-        # Segment the song
-        num_segments = int(np.ceil(song_duration / segment_length))
+        # Calculate adaptive spacing between notes based on tempo
+        min_spacing = calculate_adaptive_beat_spacing(tempo)
         
         # Prepare to write CSV
         with open(output_path, 'w', newline='') as f:
@@ -253,598 +184,450 @@ def generate_pattern_based_notes(y, sr, tempo, beats, song_duration, output_path
             # Header row
             writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
             
-            # Process each segment
-            for i in range(num_segments):
-                start_time = i * segment_length
-                end_time = min(start_time + segment_length, song_duration)
+            # Start at 3.0s to match MIDI reference
+            start_offset = 3.0
+            
+            # Track last note time by band to avoid overcrowding
+            last_note_time = {i: 0 for i in range(len(optimized_bands))}
+            
+            # For each band, add notes based on onsets
+            for band_idx, band_onsets in enumerate(onsets_by_band):
+                # Define note characteristics based on frequency band
+                if band_idx == 0:  # Kick drum (lowest band)
+                    enemy_type, color1, color2, aux = 1, 2, 2, 7
+                elif band_idx == 1:  # Low toms
+                    enemy_type, color1, color2, aux = 1, 3, 3, 7
+                elif band_idx == 2:  # Snare/mid toms
+                    enemy_type, color1, color2, aux = 1, 2, 2, 7
+                elif band_idx == 3:  # Hi-hats/cymbals
+                    enemy_type, color1, color2, aux = 1, 1, 1, 6
+                else:  # Rides/crashes (highest band)
+                    enemy_type, color1, color2, aux = 2, 5, 6, 5
                 
-                # Analyze this segment
-                if start_time < song_duration:
-                    # Get segment audio
-                    start_sample = int(start_time * sr)
-                    end_sample = int(end_time * sr)
-                    segment = y_percussive[start_sample:end_sample] if start_sample < len(y_percussive) else np.array([])
-                    
-                    if len(segment) > 0:
-                        # Analyze segment characteristics
-                        pattern_type = classify_drum_pattern(segment, sr, tempo)
-                        
-                        # Apply the pattern
-                        pattern = drum_patterns[pattern_type]
-                        
-                        # Write pattern notes for this segment
-                        for note_offset, note_type, enemy_type, color1, color2, aux in pattern:
-                            # Only add if within song duration
-                            note_time = start_time + note_offset
-                            if note_time < song_duration:
-                                writer.writerow([
-                                    f"{note_time:.2f}",
-                                    str(enemy_type),
-                                    str(color1),
-                                    str(color2),
-                                    "1",
-                                    "",
-                                    str(aux)
-                                ])
+                # Process onsets for this band
+                for onset_time in band_onsets:
+                    # Only add if after start_offset
+                    if onset_time >= start_offset:
+                        # Check if we should add a note here (respect minimum spacing)
+                        if onset_time - last_note_time[band_idx] >= min_spacing:
+                            # Round to 2 decimal places for consistent timing
+                            note_time = round(onset_time, 2)
+                            
+                            # Write the note to CSV
+                            writer.writerow([
+                                f"{note_time:.2f}",
+                                str(enemy_type),
+                                str(color1),
+                                str(color2),
+                                "1",
+                                "",
+                                str(aux)
+                            ])
+                            
+                            # Update last note time for this band
+                            last_note_time[band_idx] = onset_time
+            
+            # Add occasional crashes at downbeats (first beat of measure)
+            measure_length = 4 * spb  # 4 beats per measure
+            current_measure = 0
+            measure_start = start_offset
+            
+            while measure_start < song_duration:
+                # Add crash at beginning and every 8 measures
+                if current_measure % 8 == 0:
+                    writer.writerow([
+                        f"{measure_start:.2f}",
+                        "2",  # Crash type
+                        "5",  # Crash color 1
+                        "6",  # Crash color 2
+                        "1",
+                        "",
+                        "5"   # Crash aux
+                    ])
+                
+                # Move to next measure
+                measure_start += measure_length
+                current_measure += 1
+            
+            # Log the total number of notes generated
+            with open(output_path, 'r') as f:
+                note_count = sum(1 for _ in f) - 1  # Subtract 1 for header
+                logger.info(f"Generated {note_count} notes")
         
         return True
     
     except Exception as e:
-        logging.error(f"Error in pattern-based generation: {str(e)}")
-        return generate_fixed_basic_notes_csv(output_path, song_duration)
-
-def create_drum_patterns(spb):
-    """
-    Create a library of drum patterns at the given tempo (seconds per beat).
-    Each pattern is a list of (time_offset, note_type, enemy_type, color1, color2, aux)
-    """
-    patterns = {}
-    
-    # Basic rock beat (kick on 1,3; snare on 2,4; hihat on 8ths)
-    basic_rock = []
-    for measure in range(2):  # 2 measures
-        for beat in range(4):  # 4 beats per measure
-            beat_time = (measure * 4 + beat) * spb
-            
-            # Kick on beats 1 and 3
-            if beat == 0 or beat == 2:
-                basic_rock.append((beat_time, "kick", 1, 2, 2, 7))
-                
-            # Snare on beats 2 and 4
-            if beat == 1 or beat == 3:
-                basic_rock.append((beat_time, "snare", 1, 2, 2, 7))
-            
-            # Hihat on every 8th note
-            basic_rock.append((beat_time, "hihat", 1, 1, 1, 6))
-            basic_rock.append((beat_time + spb/2, "hihat", 1, 1, 1, 6))
-    
-    # Add crash at start of pattern
-    basic_rock.append((0, "crash", 2, 5, 6, 5))
-    
-    patterns["basic_rock"] = basic_rock
-    
-    # Double-time rock beat (faster hihat)
-    double_rock = []
-    for measure in range(2):
-        for beat in range(4):
-            beat_time = (measure * 4 + beat) * spb
-            
-            # Kick on beats 1 and 3
-            if beat == 0 or beat == 2:
-                double_rock.append((beat_time, "kick", 1, 2, 2, 7))
-                
-            # Snare on beats 2 and 4
-            if beat == 1 or beat == 3:
-                double_rock.append((beat_time, "snare", 1, 2, 2, 7))
-            
-            # Hihat on every 16th note (4 per beat)
-            for i in range(4):
-                double_rock.append((beat_time + i*spb/4, "hihat", 1, 1, 1, 6))
-    
-    # Add crash at start of pattern
-    double_rock.append((0, "crash", 2, 5, 6, 5))
-    
-    patterns["double_rock"] = double_rock
-    
-    # Half-time feel
-    half_time = []
-    for measure in range(2):
-        for beat in range(4):
-            beat_time = (measure * 4 + beat) * spb
-            
-            # Kick on beat 1, snare on 3
-            if beat == 0:
-                half_time.append((beat_time, "kick", 1, 2, 2, 7))
-            if beat == 2:
-                half_time.append((beat_time, "snare", 1, 2, 2, 7))
-            
-            # Hihat on every beat
-            half_time.append((beat_time, "hihat", 1, 1, 1, 6))
-    
-    # Add crash at start
-    half_time.append((0, "crash", 2, 5, 6, 5))
-    
-    patterns["half_time"] = half_time
-    
-    # Metal/fast beat
-    metal_beat = []
-    for measure in range(2):
-        for beat in range(4):
-            beat_time = (measure * 4 + beat) * spb
-            
-            # Double kick pattern
-            metal_beat.append((beat_time, "kick", 1, 2, 2, 7))
-            metal_beat.append((beat_time + spb/4, "kick", 1, 2, 2, 7))
-            
-            # Snare on beats 2 and 4
-            if beat == 1 or beat == 3:
-                metal_beat.append((beat_time, "snare", 1, 2, 2, 7))
-            
-            # Ride cymbal on every 8th
-            metal_beat.append((beat_time, "ride", 3, 2, 4, 5))
-            metal_beat.append((beat_time + spb/2, "ride", 3, 2, 4, 5))
-    
-    # Add crash at start
-    metal_beat.append((0, "crash", 2, 5, 6, 5))
-    
-    patterns["metal"] = metal_beat
-
-    # Add crash-heavy pattern for chorus sections
-    crash_heavy = []
-    for measure in range(2):  # 2 measures
-        for beat in range(4):  # 4 beats per measure
-            beat_time = (measure * 4 + beat) * spb
-            
-            # Kick on every beat
-            crash_heavy.append((beat_time, "kick", 1, 2, 2, 7))
-                
-            # Snare on beats 2 and 4
-            if beat == 1 or beat == 3:
-                crash_heavy.append((beat_time, "snare", 1, 2, 2, 7))
-            
-            # Crash on every beat for emphasis
-            if beat == 0 or beat == 2:  # Crashes on 1 and 3
-                crash_heavy.append((beat_time, "crash", 2, 5, 6, 5))
-            
-            # Hihat on every 8th note
-            crash_heavy.append((beat_time, "hihat", 1, 1, 1, 6))
-            crash_heavy.append((beat_time + spb/2, "hihat", 1, 1, 1, 6))
-    
-    patterns["crash_heavy"] = crash_heavy
-    
-    return patterns
-
-def classify_drum_pattern(segment, sr, tempo):
-    """
-    Classify the drum pattern in the audio segment.
-    Returns a pattern type from our library.
-    """
-    try:
-        import librosa
-        
-        # Extract features
-        # RMS energy
-        rms = np.mean(librosa.feature.rms(y=segment)[0])
-        
-        # Spectral centroid (brightness)
-        centroid = np.mean(librosa.feature.spectral_centroid(y=segment, sr=sr)[0])
-        
-        # Onset strength
-        onset_env = librosa.onset.onset_strength(y=segment, sr=sr)
-        mean_onset = np.mean(onset_env)
-        
-        # Simple decision tree for pattern classification
-        if rms > 0.15:  # High energy
-            if mean_onset > 0.5:  # Many onsets
-                if centroid > 5000:  # Bright sound
-                    return "metal"  # Fast/metal pattern
-                else:
-                    return "double_rock"  # Double-time rock
-            else:
-                if centroid > 3000:  # Brighter sound with crashes
-                    return "crash_heavy"  # Emphasize crashes
-                else:
-                    return "basic_rock"  # Basic rock pattern
-        else:  # Lower energy
-            return "half_time"  # Half-time feel
-            
-    except Exception as e:
-        logging.error(f"Error in pattern classification: {str(e)}")
-        # Default to basic rock if analysis fails
-        return "basic_rock"
-
-def calculate_adaptive_threshold(y, sr, tempo):
-    """Calculate an adaptive threshold based on audio characteristics"""
-    # Lower the base threshold dramatically
-    base_threshold = 0.00005  # Previously 0.0001
-    
-    # Calculate RMS energy
-    rms = np.sqrt(np.mean(y**2))
-    
-    # Adjust threshold based on RMS energy - lower for quieter tracks
-    if rms < 0.05:
-        threshold = base_threshold * 0.5
-    elif rms < 0.1:
-        threshold = base_threshold * 0.8
-    else:
-        threshold = base_threshold
-    
-    return threshold
-
-def calculate_adaptive_beat_spacing(tempo):
-    """Calculate adaptive minimum beat spacing based on song tempo"""
-    # Base spacing at 120 BPM would be 60/120 = 0.5 seconds
-    base_spacing = 60 / tempo
-    
-    # IMPROVED: Use smaller fractions to catch more beats
-    # Current spacing values are still too large
-    if tempo > 160:
-        return base_spacing * 0.01  # Much smaller
-    elif tempo > 120:
-        return base_spacing * 0.01  # Much smaller
-    else:
-        return base_spacing * 0.005  # Much smaller
+        logger.error(f"Error in drum-synced note generation: {str(e)}")
+        return False
 
 def multi_band_onset_detection(y, sr, bands=None):
     """
-    Detect onsets in multiple frequency bands to better identify different drum types.
-    Returns a list of (time, drum_type) tuples.
+    Detect onsets in multiple frequency bands for more accurate drum hit detection.
+    Returns a list of onset times for each frequency band.
     """
-    import librosa
-    
-    if bands is None:
-        # Use more targeted frequency bands
-        bands = {
-            'kick': (30, 90),       # Even more focused
-            'snare': (180, 320),    # Slightly wider
-            'hihat': (8000, 14000)  # Higher frequency focus
-        }
-    
-    events = []
-    
-    # Process each band separately with MUCH LOWER thresholds
-    for name, (low_freq, high_freq) in bands.items():
-        # Filter the signal to the band
-        y_band = librosa.effects.preemphasis(y)  # Enhance higher frequencies
-        y_filter = librosa.filtfilt(b=firwin(
-            numtaps=2049, 
-            cutoff=[low_freq, high_freq], 
-            fs=sr, 
-            pass_zero=False
-        ), a=[1], x=y_band)
-        
-        # Detect onsets with a MUCH LOWER threshold
-        onset_env = librosa.onset.onset_strength(
-            y=y_filter, sr=sr,
-            hop_length=512,
-            aggregate=np.median
-        )
-        
-        # Use a drastically lower threshold
-        threshold = 0.000025  # Previously around 0.00005
-        
-        onset_frames = librosa.onset.onset_detect(
-            onset_envelope=onset_env, 
-            sr=sr,
-            threshold=threshold,
-            pre_max=0.03*sr//512,
-            post_max=0.03*sr//512,
-            pre_avg=0.1*sr//512,
-            post_avg=0.1*sr//512
-        )
-        
-        # Convert frames to times
-        onset_times = librosa.frames_to_time(onset_frames, sr=sr)
-        
-        # Add each onset as an event with the drum type
-        for time in onset_times:
-            events.append((time, name))
-    
-    # Sort events by time
-    events.sort(key=lambda x: x[0])
-    return events
-
-def generate_drum_synced_notes(y, sr, song_duration, tempo, beats, output_path, optimized_bands=None):
-    """
-    Generate a notes.csv file with events synchronized to the detected drum hits.
-    """
-    # Calculate minimum spacing between consecutive beats based on tempo
-    min_beat_spacing = calculate_adaptive_beat_spacing(tempo)
-    
-    # Prepare event tracking
-    all_events = []
-    
-    # IMPROVEMENT: Combine multiple onset detection methods
-    # Method 1: Multi-band onset detection (frequency-based)
-    logging.info("Multi-band onset detection...")
-    band_events = multi_band_onset_detection(y, sr, optimized_bands)
-    logging.info(f"Detected {len(band_events)} events from multi-band analysis")
-    all_events.extend(band_events)
-    
-    # Method 2: Percussive component onset detection
-    y_harmonic, y_percussive = librosa.effects.hpss(y)
-    onset_env = librosa.onset.onset_strength(
-        y=y_percussive, sr=sr,
-        hop_length=512,
-        aggregate=np.median
-    )
-    
-    # Use a very low threshold to catch more events
-    onset_threshold = 0.0002
-    onset_frames = librosa.onset.onset_detect(
-        onset_envelope=onset_env, 
-        sr=sr,
-        threshold=onset_threshold,
-        pre_max=0.03*sr//512,
-        post_max=0.03*sr//512,
-        pre_avg=0.1*sr//512,
-        post_avg=0.1*sr//512
-    )
-    onset_times = librosa.frames_to_time(onset_frames, sr=sr)
-    
-    # Add each onset as a generic drum event
-    for time in onset_times:
-        all_events.append((time, "general"))
-    
-    # Method 3: Spectral flux onset detection (better for percussive sounds)
-    onset_flux = librosa.onset.onset_detect(
-        y=y_percussive, sr=sr, 
-        onset_envelope=librosa.onset.onset_strength(y=y_percussive, sr=sr, feature=librosa.feature.spectral_flux),
-        threshold=onset_threshold * 0.75
-    )
-    onset_times_flux = librosa.frames_to_time(onset_flux)
-    
-    # Add each onset as a generic drum event
-    for time in onset_times_flux:
-        all_events.append((time, "general"))
-    
-    # Group similar timestamps to avoid duplicates but preserve different drum types
-    # THIS PART WAS BROKEN - FIX IT
-    event_groups = {}
-    for time, drum_type in all_events:
-        # Use much finer granularity - group within 0.005s
-        rounded_time = round(time * 200) / 200  # Round to nearest 0.005s
-        if rounded_time not in event_groups:
-            event_groups[rounded_time] = []
-        event_groups[rounded_time].append(drum_type)
-    
-    # Process the groups into cleaned events
-    cleaned_events = []
-    for time, drum_types in sorted(event_groups.items()):
-        # Keep one of each unique drum type at this timestamp
-        for drum_type in set(drum_types):
-            cleaned_events.append((time, drum_type))
-    
-    logging.info(f"Detected {len(cleaned_events)} drum events")
-    
-    # Map drum types to enemy types and colors
-    drum_to_enemy_type = {
-        "kick": 1,
-        "snare": 1,
-        "hihat": 1,
-        "crash": 2,
-        "ride": 3,
-        "general": 1
-    }
-    
-    drum_to_aux = {
-        "kick": 7,
-        "snare": 7,
-        "hihat": 6,
-        "crash": 5,
-        "ride": 5,
-        "general": 7
-    }
-    
-    drum_to_colors = {
-        "kick": (2, 2),
-        "snare": (2, 2),
-        "hihat": (1, 1),
-        "crash": (5, 6),
-        "ride": (2, 4),
-        "general": (2, 2)
-    }
-    
-    # Create the notes.csv file
-    with open(output_path, 'w', newline='') as f:
-        writer = csv.writer(f)
-        
-        # Header row - exactly as in the template
-        writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
-        
-        # Process each drum event - THIS PART WAS MISSING
-        for time, drum_type in cleaned_events:
-            # Get enemy type and aux (lane) value for this drum type
-            enemy_type = drum_to_enemy_type.get(drum_type, 1)
-            aux = drum_to_aux.get(drum_type, 7)
-            color1, color2 = drum_to_colors.get(drum_type, (2, 2))
-            
-            # ADD THIS CRITICAL LINE - WRITE TO CSV
-            writer.writerow([f"{time:.2f}", str(enemy_type), str(color1), str(color2), "1", "", str(aux)])
-    
-    # Add extensive debugging to see what's happening
-    logging.info(f"Detected {len(all_events)} raw events before grouping")
-    logging.info(f"Created {len(event_groups)} event groups")
-    logging.info(f"Final cleaned events: {len(cleaned_events)}")
-    logging.info(f"First 10 events: {cleaned_events[:10]}")
-
-    # Log the actual CSV writing
-    logging.info(f"Writing {len(cleaned_events)} events to CSV at {output_path}")
-    
-    # After writing all events, log the count
-    writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
-
-    events_written = 0
-    for time, drum_type in cleaned_events:
-        enemy_type = drum_to_enemy_type.get(drum_type, 1)
-        aux = drum_to_aux.get(drum_type, 7)
-        color1, color2 = drum_to_colors.get(drum_type, (2, 2))
-        
-        writer.writerow([f"{time:.2f}", str(enemy_type), str(color1), str(color2), "1", "", str(aux)])
-        events_written += 1
-
-    logging.info(f"Successfully wrote {events_written} events to {output_path}")
-    
-    return True
-def generate_adaptive_basic_pattern(song_path, output_path, song_duration=180.0):
-    """Generate a basic pattern but try to adapt to the song's tempo"""
     try:
         import librosa
         
-        # Load the audio file
-        y, sr = librosa.load(song_path, sr=None)
+        if bands is None:
+            bands = [
+                (20, 120),    # Kick drum
+                (120, 300),   # Low toms
+                (300, 1000),  # Snare/mid toms
+                (1000, 4000), # Hi-hats/cymbals
+                (4000, 8000)  # Rides/crashes
+            ]
         
-        # Get song duration
-        if song_duration == 180.0:  # If using default
+        onsets_by_band = []
+        
+        for low_freq, high_freq in bands:
+            # Filter the audio to the band
+            y_band = librosa.effects.remix(y, intervals=librosa.frequency_bands.frequency_filter(
+                y, sr, low_freq, high_freq))
+            
+            # Compute onset envelope for this band
+            onset_env = librosa.onset.onset_strength(y=y_band, sr=sr)
+            
+            # Adaptive threshold based on the band
+            # Lower bands (kick, bass) need higher thresholds
+            if low_freq < 150:
+                threshold = 0.4
+            elif low_freq < 300:
+                threshold = 0.35
+            elif low_freq < 1000:
+                threshold = 0.3
+            else:
+                threshold = 0.25
+            
+            # Detect onsets
+            onset_frames = librosa.onset.onset_detect(
+                onset_envelope=onset_env, sr=sr,
+                threshold=threshold,
+                pre_max=0.03*sr//512,
+                post_max=0.03*sr//512,
+                pre_avg=0.08*sr//512,
+                post_avg=0.08*sr//512
+            )
+            
+            # Convert to time
+            onset_times = librosa.frames_to_time(onset_frames, sr=sr)
+            onsets_by_band.append(onset_times)
+        
+        return onsets_by_band
+        
+    except Exception as e:
+        logger.error(f"Error in multi-band onset detection: {str(e)}")
+        return []
+
+def calculate_adaptive_threshold(y, sr, tempo):
+    """
+    Calculate adaptive threshold for onset detection based on audio characteristics.
+    """
+    try:
+        import librosa
+        
+        # Calculate overall RMS energy
+        rms = np.mean(librosa.feature.rms(y=y)[0])
+        
+        # Calculate spectral flatness (measure of noisiness)
+        flatness = np.mean(librosa.feature.spectral_flatness(y=y)[0])
+        
+        # More percussive = lower threshold needed
+        y_harmonic, y_percussive = librosa.effects.hpss(y)
+        perc_ratio = np.sum(y_percussive**2) / (np.sum(y_harmonic**2) + 1e-10)
+        
+        # Base threshold adjusted by audio characteristics
+        base_threshold = 0.3
+        
+        # Adjust for energy level
+        energy_factor = 0.1 * (1 - min(rms * 10, 0.9))
+        
+        # Adjust for percussiveness
+        perc_factor = 0.1 * (1 - min(perc_ratio, 0.9))
+        
+        # Adjust for tempo - faster tempo needs higher threshold to avoid too many notes
+        tempo_factor = 0.05 * (tempo / 120.0)
+        
+        # Combine factors
+        threshold = base_threshold + energy_factor + perc_factor + tempo_factor
+        
+        # Ensure threshold is within reasonable bounds
+        threshold = max(0.15, min(threshold, 0.5))
+        
+        logger.info(f"Calculated adaptive threshold: {threshold:.3f}")
+        return threshold
+        
+    except Exception as e:
+        logger.warning(f"Error calculating adaptive threshold: {str(e)}")
+        return 0.3  # Default threshold
+
+def calculate_adaptive_beat_spacing(tempo):
+    """
+    Calculate adaptive spacing between notes based on tempo.
+    Faster tempos need larger spacing to avoid notes being too close together.
+    """
+    # Base spacing in seconds
+    base_spacing = 0.15
+    
+    # Adjust for tempo
+    if tempo < 80:
+        # Slow tempo - can have closer notes
+        return base_spacing * 0.8
+    elif tempo < 120:
+        # Medium tempo - normal spacing
+        return base_spacing
+    elif tempo < 160:
+        # Fast tempo - slightly larger spacing
+        return base_spacing * 1.2
+    else:
+        # Very fast tempo - even larger spacing
+        return base_spacing * 1.5
+
+def generate_adaptive_basic_pattern(song_path, output_path, song_duration=180.0):
+    """
+    Generate a basic pattern but with adaptive parameters based on song analysis.
+    Used as a fallback when detailed analysis fails.
+    """
+    try:
+        # Estimate duration and tempo if possible
+        try:
+            import librosa
+            y, sr = librosa.load(song_path, sr=None)
             song_duration = librosa.get_duration(y=y, sr=sr)
             
-        # Detect the tempo
-        tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-        logging.info(f"Using adaptive basic pattern with detected tempo: {tempo:.2f} BPM")
-        
-        # Calculate beat duration
-        beat_duration = 60 / tempo
-        
-        # Convert beat frames to times
-        beat_times = librosa.frames_to_time(beats, sr=sr)
-        
-        # Extract percussive component for better analysis
-        try:
-            y_harmonic, y_percussive = librosa.effects.hpss(y)
+            # Try to detect tempo
+            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
             
-            # Analyze the song to detect recurring patterns
-            mfcc = librosa.feature.mfcc(y=y_percussive, sr=sr, n_mfcc=13)
-            beat_sync_mfcc = librosa.util.sync(mfcc, beats)
+            # Analyze energy level
+            rms = librosa.feature.rms(y=y)[0].mean()
             
-            # Find repeated sections
-            S = librosa.segment.recurrence_matrix(beat_sync_mfcc)
+            # Adjust pattern density based on energy
+            if rms > 0.1:
+                pattern_type = "dense"
+            else:
+                pattern_type = "normal"
+                
         except:
-            y_percussive = y
-            S = None  # Default if HPSS fails
+            tempo = 120  # Default tempo
+            pattern_type = "normal"  # Default pattern type
+        
+        # Get seconds per beat
+        spb = 60 / tempo
         
         with open(output_path, 'w', newline='') as f:
             writer = csv.writer(f)
             
-            # CORRECT HEADERS FOR DRUMS ROCK
+            # Header row
             writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
             
-            # IMPROVED: Use actual detected beats rather than evenly spaced beats
-            if len(beat_times) > 0:
-                # Use actual detected beats but ensure they don't get too dense
-                processed_beats = []
-                last_beat = -1
+            # Start at 3.0s to match MIDI reference
+            current_time = 3.0
+            
+            # Generate beats until the end of the song
+            beat_count = 0
+            measure = 0
+            
+            # Use 16th note spacing for dense patterns, 8th for normal
+            note_divisor = 4 if pattern_type == "dense" else 2
+            note_spacing = spb / note_divisor
+            
+            while current_time < song_duration:
+                # Calculate position in measure
+                beat_in_measure = beat_count % 4
                 
-                for i, beat_time in enumerate(beat_times):
-                    # Skip if too close to previous beat
-                    if last_beat >= 0 and beat_time - processed_beats[-1] < beat_duration * 0.5:
-                        continue
-                    
-                    processed_beats.append(beat_time)
-                    last_beat = beat_time
-                    
-                    # Basic pattern - place notes on actual beats
-                    # Alternate between types
-                    if i % 4 == 0:
-                        # Downbeat - use type 1, colors 2,2, Aux 7
-                        writer.writerow([f"{beat_time:.2f}", "1", "2", "2", "1", "", "7"])
-                    elif i % 4 == 2:
-                        # Beat 3 - use type 1, colors 2,2, Aux 7
-                        writer.writerow([f"{beat_time:.2f}", "1", "2", "2", "1", "", "7"])
-                    elif i % 2 == 1:
-                        # Other beats - use type 1, colors 1,1, Aux 6
-                        writer.writerow([f"{beat_time:.2f}", "1", "1", "1", "1", "", "6"])
-                    
-                    # Every 8 beats, add a special enemy
-                    if i % 8 == 7:
-                        # Add a little offset
-                        time = beat_time + beat_duration * 0.25
-                        writer.writerow([f"{time:.2f}", "2", "5", "6", "1", "", "5"])
-                    
-                    # Every 16 beats, add a timed sequence
-                    if i % 16 == 15:
-                        # Add a little offset
-                        time = beat_time + beat_duration * 0.5
-                        writer.writerow([f"{time:.2f}", "3", "2", "2", "1", "2", "7"])
-            else:
-                # Fallback to fixed pattern if no beats detected
-                return generate_fixed_basic_notes_csv(output_path, song_duration)
+                # On main beats (quarter notes)
+                if beat_count % note_divisor == 0:
+                    # Beat 1 and 3: kick + hihat
+                    if beat_in_measure == 0 or beat_in_measure == 2:
+                        writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])  # Kick
+                        writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])  # Hihat
+                    # Beat 2 and 4: snare + hihat
+                    else:
+                        writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])  # Snare
+                        writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])  # Hihat
                 
-            # Ensure we have at least one note at the end of the song
-            if processed_beats and processed_beats[-1] < song_duration - 10:
-                writer.writerow([
-                    f"{song_duration - 5:.2f}",
-                    "1",
-                    "2",
-                    "2",
-                    "1",
-                    "",
-                    "7"
-                ])
+                # For dense patterns, add hihat on 16th notes
+                elif pattern_type == "dense":
+                    writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])  # Hihat
+                
+                # Add crash at start of each 8-beat phrase
+                if beat_count % 8 == 0:
+                    writer.writerow([f"{current_time:.2f}", "2", "5", "6", "1", "", "5"])  # Crash
+                
+                # Move to next note time
+                current_time += note_spacing
+                beat_count += 1
+                
+                # Every 4 beats is a measure
+                if beat_count % 4 == 0:
+                    measure += 1
         
-        logging.info(f"Generated tempo-adaptive notes.csv at {output_path}")
+        logger.info(f"Generated adaptive basic pattern at {output_path}")
         return True
+        
     except Exception as e:
-        logging.error(f"Error in adaptive pattern generation: {str(e)}")
-        return generate_fixed_basic_notes_csv(output_path, song_duration)
+        logger.error(f"Failed to generate adaptive basic pattern: {str(e)}")
+        
+        # Attempt a fixed pattern as last resort
+        try:
+            return generate_fixed_basic_notes_csv(output_path, song_duration)
+        except:
+            return False
 
 def generate_basic_notes_csv(song_path, output_path, song_duration=180.0):
-    """Generate notes.csv with basic patterns but try to adapt to song characteristics"""
-    logging.info("Using adaptive basic pattern generation")
-    
-    if song_path and os.path.exists(song_path):
-        # Try the adaptive pattern first, which analyzes the song
-        return generate_adaptive_basic_pattern(song_path, output_path, song_duration)
-    else:
-        # If no song path or file doesn't exist, fall back to fixed pattern
-        return generate_fixed_basic_notes_csv(output_path, song_duration)
+    """
+    Generate a very basic notes.csv file as a last resort fallback.
+    """
+    try:
+        # Estimate duration if possible
+        try:
+            import librosa
+            y, sr = librosa.load(song_path, sr=None)
+            song_duration = librosa.get_duration(y=y, sr=sr)
+            
+            # Try to detect tempo
+            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+        except:
+            tempo = 120  # Default tempo
+        
+        # Get seconds per beat
+        spb = 60 / tempo
+        
+        with open(output_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            
+            # Header row
+            writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
+            
+            # Use 16th note spacing (~0.22s) to match MIDI
+            sixteenth_note = spb / 4
+            
+            # Start at 3.0s to match MIDI reference
+            current_time = 3.0
+            
+            # Generate beats until the end of the song
+            beat_count = 0
+            
+            while current_time < song_duration:
+                # On main beats (quarter notes)
+                if beat_count % 4 == 0:
+                    # Alternate between kick and snare
+                    if (beat_count // 4) % 2 == 0:
+                        writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])  # Kick
+                    else:
+                        writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])  # Snare
+                    
+                    # Add hihat on every beat
+                    writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])  # Hihat
+                    
+                    # Add crash every 8 beats
+                    if beat_count % 8 == 0:
+                        writer.writerow([f"{current_time:.2f}", "2", "5", "6", "1", "", "5"])  # Crash
+                
+                # Move to next 16th note
+                current_time += sixteenth_note
+                beat_count += 1
+        
+        logger.info(f"Generated basic pattern at {output_path}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to generate basic notes.csv: {str(e)}")
+        return False
 
-
-# If all else fails - modify generate_fixed_basic_notes_csv to use MIDI-like spacing
 def generate_fixed_basic_notes_csv(output_path, song_duration=180.0):
-    """Generate pattern matching typical MIDI spacing as last resort"""
-    logging.info("Using MIDI-like pattern generation with 0.22s spacing")
-    
+    """
+    Generate a fixed pattern with no external dependencies as a last resort.
+    """
     try:
         with open(output_path, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
             
-            # Use 0.22s spacing like in the MIDI
-            current_time = 3.0  # Start at 3s like MIDI
+            # Generate a very simple fixed pattern
+            time_increment = 0.5  # Half-second notes
+            current_time = 3.0    # Start at 3 seconds
+            
             while current_time < song_duration:
-                writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])
-                current_time += 0.22
+                # Alternate between different note types
+                tick = int((current_time - 3.0) / time_increment)
                 
-                # Add hihat every other note
-                if int(current_time * 10) % 4 == 0:
-                    writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])
+                if tick % 4 == 0:
+                    # Every 2 seconds: kick + hihat
+                    writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])  # Kick 
+                    writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])  # Hihat
+                elif tick % 4 == 2:
+                    # Every 2 seconds offset by 1: snare + hihat
+                    writer.writerow([f"{current_time:.2f}", "1", "2", "2", "1", "", "7"])  # Snare
+                    writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])  # Hihat
+                else:
+                    # Just hihat on other beats
+                    writer.writerow([f"{current_time:.2f}", "1", "1", "1", "1", "", "6"])  # Hihat
                 
-                # Add crash every 8th note
-                if int(current_time * 10) % 20 == 0:
-                    writer.writerow([f"{current_time:.2f}", "2", "5", "6", "1", "", "5"])
+                # Add crash every 8 seconds
+                if tick % 16 == 0:
+                    writer.writerow([f"{current_time:.2f}", "2", "5", "6", "1", "", "5"])  # Crash
+                
+                current_time += time_increment
         
+        logger.info(f"Generated fixed basic pattern at {output_path}")
         return True
+        
     except Exception as e:
-        logging.error(f"Failed to generate MIDI-like notes: {str(e)}")
+        logger.error(f"Failed to generate fixed basic pattern: {str(e)}")
         return False
 
-# Add drum pattern templates for better detection
+def add_enhanced_pattern_variation(base_pattern, tempo):
+    """
+    Add more natural variations to patterns like those found in MIDI files
+    """
+    varied_pattern = []
+    
+    # Common MIDI patterns
+    midi_like_variations = [
+        # Fill variations
+        [1, 0, 1, 0, 1, 1, 0, 1],  # Typical 8th note fill
+        [1, 0, 1, 1, 1, 0, 1, 1],  # Dense fill
+        # Hihat variations
+        [1, 0, 1, 0, 1, 0, 1, 0],  # Standard 8th notes
+        [1, 1, 1, 1, 1, 1, 1, 1],  # 16th notes
+        # Kick patterns
+        [1, 0, 0, 0, 1, 0, 0, 0],  # Basic kick on 1
+        [1, 0, 0, 1, 1, 0, 0, 1],  # Kick on 1 and 3 with syncopation
+    ]
+    
+    # Use pattern variations based on section of song
+    section_length = int(len(base_pattern) / 4)
+    for i in range(0, len(base_pattern), section_length):
+        section = base_pattern[i:i+section_length]
+        
+        # Apply different variations to each drum element
+        if random.random() < 0.3:
+            # Add or remove notes based on MIDI-like patterns
+            var_index = random.randint(0, len(midi_like_variations)-1)
+            variation = midi_like_variations[var_index]
+            
+            for j, (time, note_type) in enumerate(section):
+                if j % 8 < len(variation) and variation[j % 8] == 0:
+                    # Skip this note based on variation pattern
+                    continue
+                varied_pattern.append((time, note_type))
+        else:
+            varied_pattern.extend(section)
+    
+    return varied_pattern
+
+# Define some typical drum patterns for reference and pattern recognition
 typical_patterns = [
-    # Basic rock pattern with hihat, kick and snare
+    # Basic rock pattern
     [(0, "hihat"), (0, "kick"), 
      (0.25, "hihat"), 
      (0.5, "hihat"), (0.5, "snare"), 
      (0.75, "hihat")]
 ]
 
-# Detect commonly occurring drum patterns in the song and replicate them
-
 if __name__ == "__main__":
-    # Example usage
+    import sys
     if len(sys.argv) > 2:
-        song_path = sys.argv[1]
-        output_path = sys.argv[2]
-        template_path = sys.argv[3] if len(sys.argv) > 3 else None
-        generate_notes_csv(song_path, template_path, output_path)
+        generate_notes_csv(sys.argv[1], None, sys.argv[2])
     else:
-        print("Usage: python notes_generator.py song_path output_path [template_path]")
+        print("Usage: python notes_generator.py song_path output_path")
