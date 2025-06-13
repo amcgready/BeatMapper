@@ -9,6 +9,7 @@ import logging
 import warnings
 import random
 from pathlib import Path
+from .utils import format_time, format_bpm, format_percentage, format_safe
 
 try:
     import numpy as np
@@ -58,11 +59,11 @@ def generate_notes_csv(song_path, template_path, output_path):
                 
                 # Get song duration
                 song_duration = librosa.get_duration(y=y, sr=sr)
-                logger.info(f"Song duration: {song_duration:.2f} seconds")
+                logger.info(f"Song duration: {{format_time(song_duration)}}")
                 
                 # Detect the tempo
                 tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-                logger.info(f"Detected tempo: {tempo:.2f} BPM")
+                logger.info(f"Detected tempo: {{format_bpm(tempo)}}")
                 
                 # Generate high-density events
                 events = generate_high_density_events(y, sr, tempo, song_duration)

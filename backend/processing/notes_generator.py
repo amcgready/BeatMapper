@@ -8,6 +8,7 @@ import logging
 import warnings
 from pathlib import Path
 import random
+from .utils import format_time, format_bpm, format_percentage, format_safe
 
 try:
     import numpy as np
@@ -65,11 +66,11 @@ def generate_notes_csv(song_path, template_path, output_path):
                 
                 # Get song duration
                 song_duration = librosa.get_duration(y=y, sr=sr)
-                logger.info(f"Song duration: {song_duration:.2f} seconds")
+                logger.info(f"Song duration: {{format_time(song_duration)}}")
                 
                 # Detect the tempo
                 tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-                logger.info(f"Detected tempo: {tempo:.2f} BPM")
+                logger.info(f"Detected tempo: {{format_bpm(tempo)}}")
                 
                 # Try to extract drums using spleeter if available
                 drums_y = try_extract_drums_with_spleeter(song_path)
@@ -353,7 +354,7 @@ def calculate_adaptive_threshold(y, sr, tempo):
         # Ensure threshold is within reasonable bounds
         threshold = max(0.15, min(threshold, 0.5))
         
-        logger.info(f"Calculated adaptive threshold: {threshold:.3f}")
+        logger.info(f"Calculated adaptive threshold: {{format_safe(threshold)}}")
         return threshold
         
     except Exception as e:

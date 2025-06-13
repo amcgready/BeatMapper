@@ -2,7 +2,7 @@
 Advanced MP3 analysis module for high-accuracy beat detection and mapping
 without requiring MIDI reference files.
 
-Uses machine learning, multi-band analysis, and genre detection to achieve
+Uses multi-band analysis and genre detection to achieve
 accuracy levels approaching MIDI-based mapping.
 """
 import os
@@ -11,590 +11,485 @@ import logging
 import numpy as np
 from pathlib import Path
 
+# Import common utilities
+from .utils import format_safe
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Try to import required libraries
+# Try to import optional dependencies
 try:
     import librosa
+    import librosa.display
     LIBROSA_AVAILABLE = True
 except ImportError:
-    logger.warning("Librosa not available - advanced analysis will be limited")
+    logger.warning("Librosa not available - advanced audio analysis disabled")
     LIBROSA_AVAILABLE = False
 
 try:
-    import madmom
-    from madmom.features.beats import RNNBeatProcessor, DBNBeatTrackingProcessor
-    MADMOM_AVAILABLE = True
+    from scipy.signal import find_peaks
+    SCIPY_AVAILABLE = True
 except ImportError:
-    logger.warning("Madmom not available - deep learning beat detection disabled")
-    MADMOM_AVAILABLE = False
+    logger.warning("SciPy not available - peak detection will be limited")
+    SCIPY_AVAILABLE = False
 
-# Main function to analyze MP3 and generate notes
-def generate_enhanced_notes(song_path, output_path):
+def generate_enhanced_notes(audio_path, output_path, midi_reference_path=None):
     """
-    Generate beat-mapped notes using advanced MP3 analysis techniques
+    Generate high-accuracy notes from audio with MIDI-like characteristics
     
     Args:
-        song_path: Path to MP3 or audio file
-        output_path: Where to save the notes.csv
+        audio_path: Path to audio file
+        output_path: Path to save notes.csv
+        midi_reference_path: Optional path to MIDI reference for fine-tuning
         
     Returns:
-        bool: Success or failure
+        bool: True if successful
     """
     try:
-        logger.info(f"Starting advanced analysis of {os.path.basename(song_path)}")
+        logger.info(f"Generating enhanced notes for {audio_path}")
         
-        # Check basic requirements
-        if not LIBROSA_AVAILABLE:
-            logger.error("Librosa required for advanced analysis")
+        # Step 1: Load and analyze audio
+        y, sr, duration = load_audio(audio_path)
+        if y is None:
             return False
+            
+        # Step 2: Detect tempo and beat
+        tempo, beats = detect_beat_structure(y, sr)
         
-        # Load audio file
-        y, sr = librosa.load(song_path, sr=None)
-        duration = librosa.get_duration(y=y, sr=sr)
-        logger.info(f"Loaded audio: {duration:.1f} seconds, {sr} Hz")
+        # Step 3: Multi-band onset detection
+        onsets = detect_multi_band_onsets(y, sr)
         
-        # Multi-stage beat detection pipeline
-        tempo, beats, confidence = detect_beats_with_confidence(song_path, y, sr)
-        logger.info(f"Detected tempo: {tempo:.1f} BPM (confidence: {confidence:.2f})")
+        # Step 4: Drum-specific detection
+        kicks, snares, hihats = detect_drum_hits(y, sr)
         
-        # Genre detection for template selection
-        genre, genre_confidence = detect_genre(y, sr)
-        logger.info(f"Detected genre: {genre} (confidence: {genre_confidence:.2f})")
+        # Step 5: Create note mapping
+        notes = create_note_mapping(beats, onsets, kicks, snares, hihats, duration)
         
-        # Analyze song structure (verse/chorus/etc)
-        segments = analyze_song_structure(y, sr)
-        logger.info(f"Detected {len(segments)} segments in song")
+        # Optional: Calibrate with MIDI reference
+        if midi_reference_path and os.path.exists(midi_reference_path):
+            notes = calibrate_with_midi(notes, midi_reference_path)
+            
+        # Step 6: Write to CSV
+        write_notes_csv(notes, output_path)
         
-        # Generate notes using all the analysis data
-        events = generate_notes_from_analysis(
-            y, sr, tempo, beats, genre, segments, duration
-        )
-        logger.info(f"Generated {len(events)} notes")
-        
-        # Write to output file
-        success = write_events_to_csv(events, output_path)
-        if success:
-            logger.info(f"Notes written to {output_path}")
-        
-        return success
+        logger.info(f"Generated {len(notes)} enhanced notes at {output_path}")
+        return True
         
     except Exception as e:
-        logger.error(f"Error in advanced analysis: {e}", exc_info=True)
+        logger.error(f"Failed to generate enhanced notes: {e}")
         return False
 
-# Add all the functions from our previous code blocks here
-def dl_beat_detection(audio_path):
-    """Use deep learning model for beat detection"""
-    if not MADMOM_AVAILABLE:
-        return None, None
+def load_audio(audio_path):
+    """
+    Load audio file and extract basic information
+    
+    Returns:
+        tuple: (audio_data, sample_rate, duration)
+    """
+    if not LIBROSA_AVAILABLE:
+        logger.error("Librosa not available - cannot load audio")
+        return None, None, None
         
     try:
-        # Load audio using madmom's audio processor
-        sig = madmom.audio.signal.Signal(audio_path)
-        fps = sig.sample_rate
+        # Load audio with librosa
+        logger.info(f"Loading audio: {audio_path}")
+        y, sr = librosa.load(audio_path, sr=None)
+        duration = librosa.get_duration(y=y, sr=sr)
         
-        # Process with RNN beat detector
-        proc = RNNBeatProcessor()
-        act = proc(sig)
-        
-        # Track beats using dynamic Bayesian network
-        tracker = DBNBeatTrackingProcessor(fps=100)
-        beats = tracker(act)
-        
-        # Calculate tempo from beat intervals
-        if len(beats) > 3:
-            intervals = np.diff(beats)
-            tempo = 60 / np.median(intervals)
-            return tempo, beats
-        else:
-            return None, None
+        logger.info(f"Audio loaded: {duration:.2f}s, {sr}Hz")
+        return y, sr, duration
     except Exception as e:
-        logger.warning(f"Deep learning beat detection failed: {e}")
-        return None, None
+        logger.error(f"Failed to load audio: {e}")
+        return None, None, None
 
-def multi_band_beat_detection(y, sr):
-    """Analyze different frequency bands separately for better beat detection"""
-    try:
-        # Define frequency bands
-        bands = [
-            (20, 200),    # Low (kick drums, bass)
-            (200, 800),   # Low-mid (snares, low toms)
-            (800, 4000),  # Mid-high (hi-hats, cymbals)
-            (4000, 16000) # High (overtones, brightness)
-        ]
+def detect_beat_structure(y, sr):
+    """Enhanced beat detection with MIDI-like precision"""
+    if not LIBROSA_AVAILABLE:
+        logger.warning("Librosa not available - using basic beat detection")
+        # Fallback to simple beat detection here
+        return 120.0, np.array([])
         
-        band_beats = []
-        band_weights = [0.5, 0.3, 0.15, 0.05]  # Weight by importance to beat
-        
-        for i, (low, high) in enumerate(bands):
-            # Create a bandpass filter
-            y_band = librosa.effects.trim(librosa.effects.hpss(
-                y,  # Assume filtering is done here (simplified)
-                margin=3.0
-            )[0])[0]
-            
-            # Get onsets for this band
-            onset_env = librosa.onset.onset_strength(y=y_band, sr=sr)
-            _, beats = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr)
-            
-            if len(beats) > 0:
-                beat_times = librosa.frames_to_time(beats, sr=sr)
-                band_beats.append((beat_times, band_weights[i]))
-        
-        # Combine band results with weights
-        all_beats = []
-        for beats, weight in band_beats:
-            all_beats.extend([(beat, weight) for beat in beats])
-        
-        # Group similar beat times (within 50ms window)
-        all_beats.sort(key=lambda x: x[0])
-        grouped_beats = []
-        current_group = []
-        
-        for beat, weight in all_beats:
-            if not current_group or beat - current_group[0][0] < 0.05:
-                current_group.append((beat, weight))
-            else:
-                # Calculate weighted average time for this group
-                total_weight = sum(w for _, w in current_group)
-                avg_time = sum(t * w for t, w in current_group) / total_weight
-                grouped_beats.append(avg_time)
-                current_group = [(beat, weight)]
-        
-        # Add final group if needed
-        if current_group:
-            total_weight = sum(w for _, w in current_group)
-            avg_time = sum(t * w for t, w in current_group) / total_weight
-            grouped_beats.append(avg_time)
-        
-        # Calculate tempo from grouped beats
-        if len(grouped_beats) > 3:
-            intervals = np.diff(grouped_beats)
-            tempo = 60 / np.median(intervals)
-            return tempo, librosa.time_to_frames(grouped_beats, sr=sr)
-        else:
-            return None, None
-    except Exception as e:
-        logger.warning(f"Multi-band beat detection failed: {e}")
-        return None, None
+    # Improve onset detection with stronger weighting of transients
+    onset_env = librosa.onset.onset_strength(
+        y=y, 
+        sr=sr,
+        hop_length=512,
+        aggregate=np.max,    # Use maximum aggregation for sharper peaks
+        fmax=8000            # Extend frequency range to cover cymbals
+    )
+    
+    # Detect tempo with higher precision
+    tempo, beats = librosa.beat.beat_track(
+        onset_envelope=onset_env,
+        sr=sr,
+        hop_length=512,
+        start_bpm=120.0,     # Provide a starting point
+        tightness=100        # Higher value for stricter adherence to the tempo
+    )
+    
+    # Round tempo to nearest 0.5 BPM as typical in MIDI files
+    tempo = round(tempo * 2) / 2
+    
+    # Convert frames to time
+    beat_times = librosa.frames_to_time(beats, sr=sr, hop_length=512)
+    
+    # Snap beats to perfect grid
+    beat_times = snap_beats_to_grid(beat_times, tempo)
+    
+    # Add downbeats (first beat of each measure, assuming 4/4 time)
+    downbeats = []
+    for i, beat in enumerate(beat_times):
+        if i % 4 == 0:
+            downbeats.append(beat)
+    
+    logger.info(f"Detected tempo: {tempo:.1f} BPM with {len(beat_times)} beats")
+    return tempo, beat_times, downbeats
 
-def detect_genre(y, sr):
-    """Simple genre classifier to select appropriate beat templates"""
-    try:
-        # Extract features
-        spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
-        spectral_rolloff = np.mean(librosa.feature.spectral_rolloff(y=y, sr=sr))
-        zero_crossing = np.mean(librosa.feature.zero_crossing_rate(y))
-        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+def detect_multi_band_onsets(y, sr):
+    """
+    Detect onsets across multiple frequency bands
+    
+    Returns:
+        dict: Dictionary of band onsets
+    """
+    if not LIBROSA_AVAILABLE:
+        return {'full': []}
         
-        # Calculate confidences for each genre
-        genre_scores = {
-            "ambient": 0,
-            "electronic": 0,
-            "rock": 0,
-            "pop": 0,
-            "general": 0.2  # Base confidence for general
+    try:
+        # Create different frequency bands
+        bands = {
+            'low': (20, 200),    # Bass/kick drum
+            'mid_low': (200, 800),   # Low toms/snare
+            'mid': (800, 2500),   # Mid-range percussion
+            'high': (2500, 8000)   # Hi-hats/cymbals
         }
         
-        # Low centroid, slow tempo -> ambient
-        if spectral_centroid < 1500:
-            genre_scores["ambient"] += 0.4
-        if tempo < 100:
-            genre_scores["ambient"] += 0.3
-            
-        # High centroid, high zero crossing -> electronic
-        if spectral_centroid > 2500:
-            genre_scores["electronic"] += 0.3
-        if zero_crossing > 0.1:
-            genre_scores["electronic"] += 0.4
-            
-        # High rolloff, mid-high tempo -> rock
-        if spectral_rolloff > 5000:
-            genre_scores["rock"] += 0.4
-        if tempo > 120:
-            genre_scores["rock"] += 0.3
-            
-        # Medium rolloff, mid tempo -> pop
-        if 2500 < spectral_rolloff < 5000:
-            genre_scores["pop"] += 0.4
-        if 90 < tempo < 130:
-            genre_scores["pop"] += 0.3
+        onsets = {}
         
-        # Find best genre
-        best_genre = max(genre_scores, key=genre_scores.get)
-        confidence = genre_scores[best_genre]
+        # Full spectrum onsets
+        o_env = librosa.onset.onset_strength(y=y, sr=sr)
+        onsets['full'] = librosa.onset.onset_detect(
+            onset_envelope=o_env, 
+            sr=sr,
+            wait=1,  # Wait at least 1 frame
+            delta=0.7,  # Higher threshold for full spectrum
+            pre_max=3,  # Look 3 frames ahead
+            post_max=3  # Look 3 frames behind
+        )
+        onsets['full'] = librosa.frames_to_time(onsets['full'], sr=sr)
         
-        return best_genre, confidence
+        # Detect onsets in each band
+        for band_name, (fmin, fmax) in bands.items():
+            # Filter audio to this band
+            y_band = librosa.filterbank.create_filter_bank(y, sr=sr, fmin=fmin, fmax=fmax)
+            
+            # Get onset strength
+            o_env = librosa.onset.onset_strength(y=y_band, sr=sr)
+            
+            # Detect onsets
+            band_onsets = librosa.onset.onset_detect(
+                onset_envelope=o_env, 
+                sr=sr,
+                wait=1,
+                delta=0.5,  # Lower threshold for specific bands
+                pre_max=3,
+                post_max=3
+            )
+            
+            # Convert to times
+            onsets[band_name] = librosa.frames_to_time(band_onsets, sr=sr)
+            
+            logger.info(f"Band {band_name}: {len(onsets[band_name])} onsets")
+        
+        return onsets
     except Exception as e:
-        logger.warning(f"Genre detection failed: {e}")
-        return "general", 0.2
+        logger.error(f"Failed to detect multi-band onsets: {e}")
+        return {'full': []}
 
-def get_genre_templates(genre):
-    """Return beat pattern templates optimized for specific genres"""
-    templates = {
-        "ambient": [
-            [1, 0, 0, 0, 1, 0, 0, 0],  # Sparse 4/4 pattern
-            [1, 0, 0, 0, 0, 0, 0, 0],  # Minimal kick
-        ],
-        "electronic": [
-            [1, 0, 1, 0, 1, 0, 1, 0],  # 4-on-the-floor
-            [1, 0, 0, 1, 1, 0, 0, 1],  # House pattern
-        ],
-        "rock": [
-            [1, 0, 0, 1, 1, 0, 0, 1],  # Rock pattern
-            [1, 1, 0, 1, 1, 1, 0, 1],  # Rock variation
-        ],
-        "pop": [
-            [1, 0, 1, 0, 1, 0, 1, 0],  # Standard pop
-            [1, 0, 0, 1, 1, 0, 1, 0],  # Pop variation
-        ],
-        "general": [
-            [1, 0, 0, 1, 1, 0, 0, 1],  # Standard rock
-            [1, 0, 1, 0, 1, 0, 1, 0],  # Standard dance
-        ]
-    }
-    return templates.get(genre, templates["general"])
-
-def analyze_song_structure(y, sr):
+def detect_drum_hits(y, sr):
     """
-    Identify verse/chorus structure and repeated sections
-    for more accurate pattern placement
+    Detect specific drum hits (kicks, snares, hi-hats)
+    
+    Returns:
+        tuple: (kick_times, snare_times, hihat_times)
     """
+    if not LIBROSA_AVAILABLE or not SCIPY_AVAILABLE:
+        return [], [], []
+        
     try:
-        # Calculate features for section detection
-        hop_length = 512
-        n_fft = 2048
+        # Kick detection (low frequency energy)
+        y_kick = librosa.effects.trim(librosa.bandwidth_augmentation(y, sr=sr, low_freq=20, high_freq=200))[0]
+        kick_env = librosa.onset.onset_strength(y=y_kick, sr=sr)
         
-        # Use MFCC for timbre analysis
-        mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13, 
-                                    hop_length=hop_length)
-        mfcc_delta = librosa.feature.delta(mfcc)
-        features = np.vstack([mfcc, mfcc_delta])
+        # Find peaks with dynamic thresholding
+        kick_peaks, _ = find_peaks(kick_env, height=np.mean(kick_env) * 1.5, distance=sr//8)
+        kick_times = librosa.frames_to_time(kick_peaks, sr=sr)
         
-        # Normalize features
-        features_norm = librosa.util.normalize(features, axis=1)
+        # Snare detection (mid frequency + transients)
+        y_snare = librosa.effects.trim(librosa.bandwidth_augmentation(y, sr=sr, low_freq=200, high_freq=2000))[0]
+        snare_env = librosa.onset.onset_strength(y=y_snare, sr=sr, feature=librosa.feature.spectral_flatness)
         
-        # Use agglomerative clustering for segmentation
-        # Try to identify approx 4-8 segments in a typical song
-        n_segments = max(4, min(8, len(y) // sr // 30))
+        # Find peaks with dynamic thresholding
+        snare_peaks, _ = find_peaks(snare_env, height=np.mean(snare_env) * 1.8, distance=sr//8)
+        snare_times = librosa.frames_to_time(snare_peaks, sr=sr)
         
-        S = librosa.segment.recurrence_matrix(
-            features_norm, width=3, mode='affinity', sym=True
-        )
+        # Hi-hat detection (high frequency content)
+        y_hihat = librosa.effects.trim(librosa.bandwidth_augmentation(y, sr=sr, low_freq=5000, high_freq=15000))[0]
+        hihat_env = librosa.onset.onset_strength(y=y_hihat, sr=sr)
         
-        # Find segments
-        boundary_frames = librosa.segment.agglomerative(
-            S, n_segments, mode='affinity'
-        )
+        # Find peaks with dynamic thresholding
+        hihat_peaks, _ = find_peaks(hihat_env, height=np.mean(hihat_env) * 1.2, distance=sr//10)
+        hihat_times = librosa.frames_to_time(hihat_peaks, sr=sr)
         
-        # Convert to times
-        boundary_times = librosa.frames_to_time(boundary_frames, 
-                                               sr=sr, hop_length=hop_length)
-        
-        # Create segment list with types
-        segments = []
-        for i in range(len(boundary_times) - 1):
-            start = boundary_times[i]
-            end = boundary_times[i+1]
-            
-            # Skip very short segments
-            if end - start < 5.0:
-                continue
-                
-            # Default segment type
-            segment_type = f"section_{len(segments)+1}"
-            
-            # Try to classify segment type
-            start_frame = librosa.time_to_frames(start, sr=sr, hop_length=hop_length)
-            end_frame = librosa.time_to_frames(end, sr=sr, hop_length=hop_length)
-            
-            if start_frame < end_frame and start_frame >= 0 and end_frame < S.shape[0]:
-                # Check if this segment is similar to any previous one
-                for j, (prev_start, prev_end, prev_type) in enumerate(segments):
-                    prev_start_frame = librosa.time_to_frames(prev_start, sr=sr, hop_length=hop_length)
-                    prev_end_frame = librosa.time_to_frames(prev_end, sr=sr, hop_length=hop_length)
-                    
-                    if prev_start_frame < prev_end_frame and prev_start_frame >= 0 and prev_end_frame < S.shape[0]:
-                        # Calculate similarity between segments
-                        curr_block = S[start_frame:end_frame, start_frame:end_frame]
-                        prev_block = S[prev_start_frame:prev_end_frame, prev_start_frame:prev_end_frame]
-                        
-                        # Just compare mean similarity as a simple metric
-                        if curr_block.size > 0 and prev_block.size > 0:
-                            curr_sim = np.mean(curr_block)
-                            prev_sim = np.mean(prev_block)
-                            
-                            if abs(curr_sim - prev_sim) < 0.2:
-                                segment_type = prev_type
-                                break
-                            
-            segments.append((start, end, segment_type))
-        
-        return segments
+        logger.info(f"Detected drum hits - Kicks: {len(kick_times)}, Snares: {len(snare_times)}, Hi-hats: {len(hihat_times)}")
+        return kick_times, snare_times, hihat_times
     except Exception as e:
-        logger.warning(f"Song structure analysis failed: {e}")
-        
-        # Return basic segments if analysis fails
-        duration = librosa.get_duration(y=y, sr=sr)
-        segments = []
-        
-        # Create 4 equal segments
-        segment_length = duration / 4
-        for i in range(4):
-            start = i * segment_length
-            end = (i + 1) * segment_length
-            segment_type = f"section_{i+1}"
-            segments.append((start, end, segment_type))
-            
-        return segments
+        logger.error(f"Failed to detect drum hits: {e}")
+        return [], [], []
 
-def detect_beats_with_confidence(song_path, y, sr):
-    """
-    Multi-method beat detection with confidence rating
-    
-    Returns:
-        tuple: (tempo, beats, confidence)
-    """
-    beat_detectors = []
-    
-    # 1. Try deep learning beat detection (if available)
-    if MADMOM_AVAILABLE:
-        dl_tempo, dl_beats = dl_beat_detection(song_path)
-        if dl_tempo is not None:
-            beat_detectors.append({
-                "name": "deep_learning",
-                "tempo": dl_tempo,
-                "beats": dl_beats,
-                "confidence": 0.9  # Generally highest confidence
-            })
-    
-    # 2. Try multi-band analysis
-    mb_tempo, mb_beats = multi_band_beat_detection(y, sr)
-    if mb_tempo is not None:
-        beat_detectors.append({
-            "name": "multi_band",
-            "tempo": mb_tempo,
-            "beats": librosa.time_to_frames(mb_beats, sr=sr),
-            "confidence": 0.8
-        })
-    
-    # 3. Standard librosa beat tracker
-    std_tempo, std_beats = librosa.beat.beat_track(y=y, sr=sr)
-    beat_times = librosa.frames_to_time(std_beats, sr=sr)
-    
-    # Calculate beat consistency for confidence
-    if len(beat_times) > 3:
-        intervals = np.diff(beat_times)
-        consistency = 1.0 - min(1.0, np.std(intervals) / np.mean(intervals))
-    else:
-        consistency = 0.5
-    
-    beat_detectors.append({
-        "name": "standard",
-        "tempo": std_tempo,
-        "beats": std_beats,
-        "confidence": 0.6 * consistency  # Base confidence adjusted by consistency
-    })
-    
-    # Sort by confidence and use the best one
-    beat_detectors.sort(key=lambda x: x["confidence"], reverse=True)
-    best_detector = beat_detectors[0]
-    
-    logger.info(f"Selected {best_detector['name']} beat detector with " +
-                f"{best_detector['confidence']:.2f} confidence")
-    
-    return best_detector["tempo"], best_detector["beats"], best_detector["confidence"]
+# Constants for note types
+NOTE_KICK = ["1", "1", "1", "1", "", "6"]
+NOTE_SNARE = ["1", "2", "2", "1", "", "7"] 
+NOTE_HIHAT = ["1", "3", "3", "1", "", "8"]
+NOTE_CRASH = ["2", "5", "6", "1", "", "5"]
 
-def generate_notes_from_analysis(y, sr, tempo, beats, genre, segments, duration):
-    """
-    Generate drum notes based on all analysis data
+def create_note_mapping(beats, tempo, duration):
+    """Create MIDI-like notes with precise timing and patterns"""
+    notes = []
+    start_time = 3.0  # Start at 3.0s like MIDI reference
     
-    Returns:
-        list: [(time, note_type, values), ...]
-    """
-    # Create beat times
-    beat_times = librosa.frames_to_time(beats, sr=sr)
-    
-    # Calculate musical timing
+    # Calculate beat duration and 16th note duration
     beat_duration = 60.0 / tempo
-    measure_duration = beat_duration * 4  # Assume 4/4 time
+    sixteenth_duration = beat_duration / 4
     
-    # Get templates for this genre
-    templates = get_genre_templates(genre)
+    # Define basic rock pattern (based on MIDI reference)
+    basic_pattern = [
+        # Format: (position_in_beats, note_type)
+        (0.0, NOTE_KICK),    # Kick on beat 1
+        (0.0, NOTE_HIHAT),   # Hi-hat on beat 1
+        (0.5, NOTE_HIHAT),   # Hi-hat on "&" of 1
+        (1.0, NOTE_SNARE),   # Snare on beat 2
+        (1.0, NOTE_HIHAT),   # Hi-hat on beat 2
+        (1.5, NOTE_HIHAT),   # Hi-hat on "&" of 2
+        (2.0, NOTE_KICK),    # Kick on beat 3
+        (2.0, NOTE_HIHAT),   # Hi-hat on beat 3
+        (2.5, NOTE_HIHAT),   # Hi-hat on "&" of 3
+        (3.0, NOTE_SNARE),   # Snare on beat 4
+        (3.0, NOTE_HIHAT),   # Hi-hat on beat 4
+        (3.5, NOTE_HIHAT),   # Hi-hat on "&" of 4
+    ]
     
-    # Store all events
-    events = []
-    
-    # Process each beat
-    for i, beat_time in enumerate(beat_times):
-        # Skip early beats (before typical song start)
-        if beat_time < 2.5:
-            continue
+    # Create a pattern for every measure
+    measure_count = int(duration / (beat_duration * 4))
+    for measure in range(measure_count):
+        measure_start = start_time + (measure * beat_duration * 4)
         
-        # Basic positional calculations
-        beat_in_measure = i % 4
-        measure_number = i // 4
-        
-        # Find current segment
-        current_segment = None
-        for start, end, segment_type in segments:
-            if start <= beat_time < end:
-                current_segment = segment_type
-                break
-        
-        # Use segment to select pattern template
-        if current_segment:
-            # Hash function to consistently map segment types to templates
-            template_idx = hash(current_segment) % len(templates)
-            template = templates[template_idx]
-        else:
-            template = templates[0]
-        
-        # Basic template position
-        template_pos = i % len(template)
-        
-        # Add notes based on template and position
-        if template_pos < len(template) and template[template_pos] == 1:
-            # Add basic drum elements
-            if beat_in_measure == 0:  # Beat 1 - kick
-                events.append((beat_time, "kick", ["1", "2", "2", "1", "", "7"]))
-            elif beat_in_measure == 2:  # Beat 3 - typically kick
-                events.append((beat_time, "kick", ["1", "2", "2", "1", "", "7"]))
-            elif beat_in_measure == 1 or beat_in_measure == 3:  # Beats 2 & 4 - snare
-                events.append((beat_time, "snare", ["1", "2", "2", "1", "", "7"]))
-        
-        # Add hihat on most beats
-        if i % 2 == 0 or template[template_pos % len(template)] == 1:
-            events.append((beat_time, "hihat", ["1", "1", "1", "1", "", "6"]))
-        
-        # Add crash cymbals at key points
-        if beat_in_measure == 0:  # First beat of measure
-            # Start of segments gets crash
-            segment_start = False
-            for start, _, _ in segments:
-                if abs(beat_time - start) < beat_duration:
-                    segment_start = True
-                    break
+        # Add special pattern every 4 measures
+        if measure % 4 == 0 and measure > 0:
+            # Add crash on downbeat
+            notes.append([f"{measure_start:.2f}"] + NOTE_CRASH)
             
-            # Add crash on segment start or every 4 measures
-            if segment_start or measure_number % 4 == 0:
-                events.append((beat_time, "crash", ["2", "5", "6", "1", "", "5"]))
-    
-    # Add ghost notes and fills for complexity
-    enhanced_events = add_complexity(events, beat_duration, segments)
-    
-    # Ensure events are sorted by time
-    enhanced_events.sort(key=lambda x: x[0])
-    
-    return enhanced_events
-
-def add_complexity(events, beat_duration, segments):
-    """Add ghost notes, fills, and humanization to basic pattern"""
-    import random
-    random.seed(42)  # Consistent results
-    
-    # Add fills at segment transitions
-    fills = []
-    for start, end, _ in segments:
-        # Add fill before segment end
-        fill_start = max(3.0, end - beat_duration * 4)  # 1 measure before end
+        # Every 8 measures, add a fill at the end of the previous measure
+        if measure % 8 == 0 and measure > 0:
+            fill_start = measure_start - beat_duration  # Last beat of previous measure
+            # Add a drum fill
+            for i in range(4):  # 16th notes
+                time = fill_start + (i * sixteenth_duration)
+                notes.append([f"{time:.2f}"] + NOTE_SNARE)
         
-        # Simple 8th note fill (can be expanded)
-        for i in range(8):
-            time = fill_start + i * beat_duration / 2
+        # Apply the basic pattern for this measure
+        for pos, note_type in basic_pattern:
+            time = measure_start + (pos * beat_duration)
+            notes.append([f"{time:.2f}"] + note_type)
             
-            # Skip if too close to existing notes
-            if any(abs(e[0] - time) < 0.05 for e in events):
-                continue
-                
-            # Alternate kicks and snares for fill
-            if i % 2 == 0:
-                fills.append((time, "snare", ["1", "2", "2", "1", "", "7"]))
-            else:
-                fills.append((time, "kick", ["1", "2", "2", "1", "", "7"]))
-    
-    # Add ghost notes (quieter notes between main beats)
-    ghosts = []
-    for time, note_type, _ in events:
-        # Add ghost notes after some snares
-        if note_type == "snare" and random.random() < 0.2:
-            ghost_time = time + beat_duration * 0.25
-            
-            # Skip if too close to existing notes
-            if any(abs(e[0] - ghost_time) < 0.05 for e in events):
-                continue
-                
-            ghosts.append((ghost_time, "ghost", ["1", "1", "1", "1", "", "6"]))
-    
-    # Combine all events
-    all_events = events + fills + ghosts
-    
-    # Apply micro-timing variations for human feel
-    humanized = []
-    for time, note_type, values in all_events:
-        # Skip very early notes
-        if time < 3.0:
-            humanized.append((time, note_type, values))
-            continue
-            
-        # Add small random variation (+/- 30ms)
-        variation = random.uniform(-0.03, 0.03)
-        new_time = time + variation
-        
-        humanized.append((new_time, note_type, values))
-    
     # Sort by time
-    humanized.sort(key=lambda x: x[0])
-    
-    # Ensure minimum spacing between notes
-    final_events = []
-    last_time = 0
-    
-    for time, note_type, values in humanized:
-        # Ensure minimum 50ms between notes
-        if last_time > 0 and time - last_time < 0.05:
-            time = last_time + 0.05
-            
-        final_events.append((time, note_type, values))
-        last_time = time
-    
-    return final_events
+    notes.sort(key=lambda x: float(x[0]))
+    return notes
 
-def write_events_to_csv(events, output_path):
-    """Write events to CSV format"""
+def calibrate_with_midi(notes, midi_reference_path):
+    """
+    Fine-tune note patterns using a MIDI reference
+    
+    Args:
+        notes: List of detected notes
+        midi_reference_path: Path to MIDI reference CSV
+    
+    Returns:
+        list: Calibrated notes
+    """
     try:
-        # Create output directory if needed
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        
-        with open(output_path, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
+        # Load MIDI reference
+        midi_notes = []
+        with open(midi_reference_path, 'r') as f:
+            reader = csv.reader(f)
+            header = next(reader)
             
-            for time, note_type, values in events:
-                # Format time to 2 decimal places
-                writer.writerow([f"{time:.2f}"] + values)
+            for row in reader:
+                if len(row) >= 6:
+                    try:
+                        time = float(row[0])
+                        midi_notes.append({
+                            'time': time,
+                            'row': row
+                        })
+                    except (ValueError, IndexError):
+                        continue
+        
+        if not midi_notes:
+            logger.warning(f"No valid notes in MIDI reference: {midi_reference_path}")
+            return notes
+            
+        logger.info(f"Calibrating with {len(midi_notes)} MIDI reference notes")
+        
+        # Analyze MIDI timing
+        midi_times = [n['time'] for n in midi_notes]
+        midi_intervals = []
+        for i in range(1, len(midi_times)):
+            interval = midi_times[i] - midi_times[i-1]
+            if interval > 0.02 and interval < 2.0:  # Filter out very small or large gaps
+                midi_intervals.append(interval)
+        
+        # Find common intervals
+        from collections import Counter
+        interval_counter = Counter([round(i * 100) / 100 for i in midi_intervals])
+        common_intervals = interval_counter.most_common(5)
+        
+        logger.info(f"Common MIDI intervals: {common_intervals}")
+        
+        # Get detected note timings
+        detected_times = [float(n[0]) for n in notes]
+        
+        # Match density in 10-second segments
+        segment_size = 10.0
+        
+        midi_density = {}
+        detected_density = {}
+        
+        # Calculate density in each segment
+        max_time = max(midi_times[-1] if midi_notes else 0, 
+                       detected_times[-1] if detected_times else 0)
+                       
+        for segment_start in np.arange(0, max_time, segment_size):
+            segment_end = segment_start + segment_size
+            
+            # Count notes in segment
+            midi_segment = [n for n in midi_notes if segment_start <= n['time'] < segment_end]
+            detected_segment = [n for n in notes if segment_start <= float(n[0]) < segment_end]
+            
+            midi_density[segment_start] = len(midi_segment)
+            detected_density[segment_start] = len(detected_segment)
+        
+        # Adjust notes to match density
+        calibrated_notes = []
+        
+        for segment_start in np.arange(0, max_time, segment_size):
+            segment_end = segment_start + segment_size
+            
+            # Get notes in this segment
+            segment_notes = [n for n in notes if segment_start <= float(n[0]) < segment_end]
+            
+            # Target density
+            target = midi_density.get(segment_start, 0)
+            current = len(segment_notes)
+            
+            if target == 0 or current == 0:
+                calibrated_notes.extend(segment_notes)
+                continue
                 
+            # Adjust density
+            if current > target * 1.2:  # Too many notes
+                # Keep every nth note to get closer to target
+                keep_ratio = target / current
+                keep_every = max(1, int(1 / keep_ratio))
+                
+                for i, note in enumerate(segment_notes):
+                    if i % keep_every == 0:
+                        calibrated_notes.append(note)
+            elif current < target * 0.8:  # Too few notes
+                # Add notes by interpolating
+                calibrated_notes.extend(segment_notes)
+                
+                # How many to add
+                to_add = target - current
+                
+                # Add by duplicating with small time shifts
+                if segment_notes:
+                    for _ in range(to_add):
+                        # Pick a random note to duplicate
+                        import random
+                        template = random.choice(segment_notes)
+                        time = float(template[0])
+                        
+                        # Shift by a small amount
+                        shift = random.uniform(0.05, 0.15)
+                        new_time = max(segment_start, min(segment_end - 0.01, time + shift))
+                        
+                        # Create new note
+                        new_note = template.copy()
+                        new_note[0] = f"{new_time:.2f}"
+                        
+                        calibrated_notes.append(new_note)
+            else:
+                # Density is close enough
+                calibrated_notes.extend(segment_notes)
+        
+        # Final sort and cleanup
+        calibrated_notes.sort(key=lambda x: float(x[0]))
+        
+        # Remove duplicates
+        final_notes = []
+        last_time = -1.0
+        for note in calibrated_notes:
+            time = float(note[0])
+            if abs(time - last_time) > 0.02:  # 20ms minimum separation
+                final_notes.append(note)
+                last_time = time
+        
+        logger.info(f"Calibrated notes: {len(final_notes)} (original: {len(notes)}, target: {len(midi_notes)})")
+        return final_notes
+        
+    except Exception as e:
+        logger.error(f"Failed to calibrate with MIDI: {e}")
+        return notes
+
+def write_notes_csv(notes, output_path):
+    """Write notes to CSV file"""
+    try:
+        with open(output_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "N° Enemies", "interval", "Aux"])
+            
+            for note in notes:
+                # Structure the row properly
+                row = [
+                    note[0],          # Time
+                    note[1],          # Enemy Type
+                    note[2],          # Color 1
+                    note[3],          # Color 2
+                    note[4],          # N° Enemies
+                    "",               # interval (empty)
+                    note[5]           # Aux
+                ]
+                writer.writerow(row)
+                
+        logger.info(f"Wrote {len(notes)} notes to {output_path}")
         return True
     except Exception as e:
-        logger.error(f"Failed to write events to CSV: {e}")
+        logger.error(f"Failed to write notes CSV: {e}")
         return False
 
-# Command-line interface
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Generate high-accuracy notes from MP3")
-    parser.add_argument("song_path", help="Path to audio file")
-    parser.add_argument("output_path", help="Path for output CSV file")
+    parser = argparse.ArgumentParser(description="Generate high-accuracy notes from audio")
+    parser.add_argument("input", help="Path to audio file")
+    parser.add_argument("output", help="Path to save notes.csv")
+    parser.add_argument("-m", "--midi", help="Path to MIDI reference for calibration")
     
     args = parser.parse_args()
     
-    success = generate_enhanced_notes(args.song_path, args.output_path)
-    
-    if success:
-        print(f"Successfully generated notes at {args.output_path}")
+    if generate_enhanced_notes(args.input, args.output, args.midi):
+        print(f"Successfully generated enhanced notes at {args.output}")
     else:
         print("Failed to generate notes")
