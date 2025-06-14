@@ -23,7 +23,7 @@ It uses audio processing and AI models to generate drum charts, audio previews, 
 
 ## 🖥️ Requirements
 
-- **Python 3.9+**
+- **Python 3.10.0 (later versions of Python may be incompatible with dependencies)**
 - **Node.js 18+ & npm**
 - **FFmpeg** (required for audio processing)
 - **Git** (recommended)
