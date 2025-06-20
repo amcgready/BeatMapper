@@ -565,16 +565,62 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
 // --- Home Page ---
 function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
   const fileInputRef = useRef();
+  const logsRef = useRef(); // Add ref for logs container
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const navigate = useNavigate();
   
   // Add new state for the metadata modal
-  const [isMetadataModalOpen, setIsMetadataModalOpen] = useState(false);
-  const [currentBeatmap, setCurrentBeatmap] = useState(null);
-  // Add state to store extracted metadata
+  const [isMetadataModalOpen, setIsMetadataModalOpen] = useState(false);  const [currentBeatmap, setCurrentBeatmap] = useState(null);  // Add state to store extracted metadata
   const [extractedMetadata, setExtractedMetadata] = useState(null);
   const [downloadingMap, setDownloadingMap] = useState({});
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);  // Auto-scroll logs to bottom whenever logs change
+  useEffect(() => {
+    if (logsRef.current && logs.length > 0) {
+      const logsContainer = logsRef.current;
+      
+      // Use requestAnimationFrame to ensure DOM has updated
+      requestAnimationFrame(() => {
+        // Always scroll to bottom on the first few logs or if content is small
+        if (logs.length <= 3 || logsContainer.scrollHeight <= logsContainer.clientHeight) {
+          logsContainer.scrollTop = logsContainer.scrollHeight;
+          setShowScrollToBottom(false);
+          return;
+        }
+        
+        // Check if user is near the bottom (within 30px) before auto-scrolling
+        const distanceFromBottom = logsContainer.scrollHeight - logsContainer.scrollTop - logsContainer.clientHeight;
+        const isNearBottom = distanceFromBottom < 30;
+        
+        if (isNearBottom) {
+          // Force scroll to bottom
+          logsContainer.scrollTop = logsContainer.scrollHeight;
+          setShowScrollToBottom(false);
+        } else {
+          setShowScrollToBottom(true);
+        }
+      });
+    }
+  }, [logs]);  // Handle scroll events to show/hide scroll to bottom button
+  const handleLogsScroll = () => {
+    if (logsRef.current) {
+      const logsContainer = logsRef.current;
+      const distanceFromBottom = logsContainer.scrollHeight - logsContainer.scrollTop - logsContainer.clientHeight;
+      const isNearBottom = distanceFromBottom < 30;
+      setShowScrollToBottom(!isNearBottom);
+    }
+  };
+
+  // Scroll to bottom manually
+  const scrollToBottom = () => {
+    if (logsRef.current) {
+      logsRef.current.scrollTo({
+        top: logsRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+      setShowScrollToBottom(false);
+    }
+  };
 
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
@@ -803,14 +849,24 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
               )}
             </button>
           </form>
-        </div>
-
-        {/* Logs section - doubled width */}
-        <div className="bm-card logs-card mt-6 mx-auto">
+        </div>        {/* Logs section - doubled width */}
+        <div className="bm-card logs-card mt-6 mx-auto" style={{ position: 'relative' }}>
           <div className="bm-logs-title">Logs</div>
-          <pre className="bm-log-output w-full">
+          <pre 
+            className="bm-log-output w-full" 
+            ref={logsRef}
+            onScroll={handleLogsScroll}
+          >
             {logs.join("\n")}
-          </pre>
+          </pre>          {showScrollToBottom && (
+            <button
+              onClick={scrollToBottom}
+              className="logs-scroll-to-bottom"
+              title="Scroll to bottom"
+            >
+              ↓
+            </button>
+          )}
         </div>
 
         {/* Your Beatmaps Section - doubled width */}
