@@ -11,12 +11,9 @@ export function extractMetadataWithJSMediaTags(file) {
       window.jsmediatags.read(file, {
         onSuccess: (tag) => {
           console.log("jsmediatags extraction successful:", tag);
-          
-          const result = {
+            const result = {
             title: tag.tags.title || '',
             artist: tag.tags.artist || '',
-            album: tag.tags.album || '',
-            year: tag.tags.year || null,
             artwork: null
           };
           

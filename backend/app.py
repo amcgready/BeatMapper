@@ -174,17 +174,14 @@ def upload_file():
         mp3_path = os.path.join(temp_dir, 'song.mp3')
         logger.info(f"Saving MP3 to: {mp3_path}")
         file.save(mp3_path)
-        logger.info(f"MP3 saved successfully: {os.path.getsize(mp3_path)} bytes")
-          # Extract metadata from the form
+        logger.info(f"MP3 saved successfully: {os.path.getsize(mp3_path)} bytes")        # Extract metadata from the form
         title = request.form.get('title', '')
         artist = request.form.get('artist', '')
-        album = request.form.get('album', '')
-        year = request.form.get('year', '')
         
         # Parse and clean up title/artist metadata in case they're combined
         parsed_title, parsed_artist = parse_artist_title_metadata(title, artist)
         
-        logger.info(f"Original metadata: title='{title}', artist='{artist}', album='{album}', year='{year}'")
+        logger.info(f"Original metadata: title='{title}', artist='{artist}'")
         logger.info(f"Parsed metadata: title='{parsed_title}', artist='{parsed_artist}'")
         
         # Use parsed values
@@ -239,19 +236,30 @@ def upload_file():
           # Generate info.csv with metadata
         info_path = os.path.join(beatmap_dir, 'info.csv')
         song_metadata = {
-            "title": title or os.path.splitext(file.filename)[0],
-            "artist": artist or "Unknown Artist",
+            "title": title or os.path.splitext(file.filename)[0],            "artist": artist or "Unknown Artist",
             "difficulty": "EASY",  # Default difficulty
             "song_map": "VULCAN"   # Default song map
         }
         
         try:
             logger.info(f"Generating info.csv: {info_path}")
-            generate_info_csv(song_metadata, info_path, ogg_path)  # Pass audio path for duration calculation
+            generate_info_csv(song_metadata, info_path, ogg_path, notes_path, auto_detect_difficulty=True)  # Pass audio path and notes path for difficulty detection
             logger.info(f"Info CSV generated: {os.path.getsize(info_path)} bytes")
         except Exception as e:
             logger.error(f"Failed to generate info.csv: {e}", exc_info=True)
             return jsonify({"status": "error", "error": f"Failed to generate info.csv: {str(e)}"}), 500
+        
+        # Read back the generated info.csv to get the actual detected difficulty and song_map
+        try:
+            with open(info_path, 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    song_metadata["difficulty"] = str(row['Difficulty'])  # Convert to string for beatmaps.json
+                    song_metadata["song_map"] = str(row['Song Map'])      # Convert to string for beatmaps.json
+                    break  # Only need the first (and only) row
+        except Exception as e:
+            logger.warning(f"Could not read back generated info.csv: {e}")
+            # Keep the original metadata if reading fails
           # Add to beatmaps.json
         beatmaps_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
         beatmap = {
@@ -673,12 +681,12 @@ def update_beatmap(beatmap_id):
                 "difficulty": difficulty,
                 "song_map": song_map
             }
-            
-            # Get audio file path for duration calculation
+              # Get audio file path for duration calculation
             ogg_path = os.path.join(beatmap_dir, 'song.ogg')
+            notes_csv_path = os.path.join(beatmap_dir, 'notes.csv')
             
-            # Generate/update info.csv file
-            generate_info_csv(song_metadata, info_path, ogg_path)
+            # Generate/update info.csv file (don't auto-detect since user is manually setting)
+            generate_info_csv(song_metadata, info_path, ogg_path, notes_csv_path, auto_detect_difficulty=False)
             logger.info(f"Updated info.csv")
         except Exception as e:
             logger.error(f"Failed to update info.csv: {e}", exc_info=True)

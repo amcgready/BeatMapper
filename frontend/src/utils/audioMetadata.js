@@ -14,13 +14,10 @@ export async function extractMP3Metadata(file) {
       // First try with music-metadata-browser
       const metadata = await musicMetadata.parseBlob(file, { skipPostHeaders: true });
       console.log("Raw metadata extracted with music-metadata-browser:", metadata);
-      
-      // Extract the required information
+        // Extract the required information
       const result = {
         title: metadata.common?.title || '',
-        artist: metadata.common?.artist || '',
-        album: metadata.common?.album || '',
-        year: metadata.common?.year || null
+        artist: metadata.common?.artist || ''
       };
       
       // Extract album artwork if available
@@ -38,9 +35,8 @@ export async function extractMP3Metadata(file) {
       }
       
       console.log("Extracted metadata with music-metadata-browser:", result);
-      
-      // If we have at least some metadata, return it
-      if (result.title || result.artist || result.album || result.artwork) {
+        // If we have at least some metadata, return it
+      if (result.title || result.artist || result.artwork) {
         return result;
       }
     } catch (musicMetadataError) {

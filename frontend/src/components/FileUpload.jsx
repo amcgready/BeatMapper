@@ -21,9 +21,8 @@ function FileUpload({ onSuccess, setLog }) {
       const metadata = await extractMP3Metadata(file);
       
       console.log("Metadata returned to component:", metadata);
-      
-      // Check if we got any meaningful metadata
-      const hasMetadata = metadata.title || metadata.artist || metadata.album;
+        // Check if we got any meaningful metadata
+      const hasMetadata = metadata.title || metadata.artist;
       
       if (!hasMetadata) {
         console.log("No meaningful metadata found in the file");
@@ -31,22 +30,18 @@ function FileUpload({ onSuccess, setLog }) {
       } else {
         setLog("Metadata extracted successfully");
       }
-      
-      onSuccess(
+        onSuccess(
         {
           title: metadata.title || '',
           artist: metadata.artist || '',
-          album: metadata.album || '',
-          year: metadata.year || '',
           artwork: metadata.artwork || null,
         },
         file,
         album
       );
     } catch (err) {
-      console.error("Component level error handling:", err);
-      setLog("Error extracting metadata. Please enter details manually.");
-      onSuccess({ title: "", artist: "", album: "", year: "", artwork: "" }, file, album);
+      console.error("Component level error handling:", err);      setLog("Error extracting metadata. Please enter details manually.");
+      onSuccess({ title: "", artist: "", artwork: "" }, file, album);
     } finally {
       setLoading(false);
     }

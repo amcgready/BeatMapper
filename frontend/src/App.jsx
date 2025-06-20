@@ -10,7 +10,6 @@ import { extractMP3Metadata } from './utils/audioMetadata';
 function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metadata, setMetadata] = useState({
     title: beatmap?.title || "",
     artist: beatmap?.artist || "",
-    difficulty: beatmap?.difficulty || "EASY",
     song_map: beatmap?.song_map || "VULCAN",
   });
   
@@ -19,11 +18,9 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
   const [isSaving, setIsSaving] = useState(false);
     // Reset form when beatmap changes
   useEffect(() => {
-    if (beatmap) {
-      setMetadata({
+    if (beatmap) {      setMetadata({
         title: beatmap.title || "",
         artist: beatmap.artist || "",
-        difficulty: beatmap.difficulty || "EASY",
         song_map: beatmap.song_map || "VULCAN",
       });
       setAlbumArtPreview(beatmap.artwork || null);
@@ -64,7 +61,6 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
         },        body: JSON.stringify({
           title: metadata.title || "",
           artist: metadata.artist || "",
-          difficulty: metadata.difficulty || "EASY",
           song_map: metadata.song_map || "VULCAN"
         })
       });
@@ -236,29 +232,7 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
               padding: "8px 12px",
               color: "white",
             }}
-          />
-        </div>
-          <div style={{ marginBottom: "16px", textAlign: "left" }}>
-          <div style={{ marginBottom: "8px" }}>Difficulty</div>
-          <select
-            name="difficulty"
-            value={metadata.difficulty}
-            onChange={handleInputChange}
-            style={{
-              width: "100%",
-              backgroundColor: "#1a1d20",
-              border: "1px solid #444",
-              borderRadius: "4px",
-              padding: "8px 12px",
-              color: "white",
-            }}
-          >
-            <option value="EASY">Easy (0)</option>
-            <option value="MEDIUM">Medium (1)</option>
-            <option value="HARD">Hard (2)</option>
-            <option value="EXTREME">Extreme (3)</option>
-          </select>
-        </div>
+          />        </div>
         
         <div style={{ marginBottom: "24px", textAlign: "left" }}>
           <div style={{ marginBottom: "8px" }}>Song Map</div>
@@ -350,7 +324,6 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
   const [editMode, setEditMode] = useState(false);  const [editFields, setEditFields] = useState({
     title: beatmap?.title || "",
     artist: beatmap?.artist || "",
-    difficulty: beatmap?.difficulty || "EASY",
     song_map: beatmap?.song_map || "VULCAN"
   });
 
@@ -378,7 +351,6 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
           id: beatmap.id,
           title: editFields.title,
           artist: editFields.artist,
-          difficulty: editFields.difficulty,
           song_map: editFields.song_map
         })
       });
@@ -479,21 +451,7 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
                   value={editFields.artist}
                   onChange={handleChange}
                   className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2"
-                />
-              </div>              <div>
-                <label className="block text-sm font-semibold mb-1">Difficulty:</label>
-                <select
-                  name="difficulty"
-                  value={editFields.difficulty}
-                  onChange={handleChange}
-                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2"
-                >
-                  <option value="EASY">Easy (0)</option>
-                  <option value="MEDIUM">Medium (1)</option>
-                  <option value="HARD">Hard (2)</option>
-                  <option value="EXTREME">Extreme (3)</option>
-                </select>
-              </div>
+                />              </div>
 
               <div>
                 <label className="block text-sm font-semibold mb-1">Song Map:</label>
@@ -635,21 +593,15 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
       const metadata = await extractMP3Metadata(file);
       
       // Log the extraction results
-      const foundItems = [];
-      if (metadata.title) foundItems.push("Title");
+      const foundItems = [];      if (metadata.title) foundItems.push("Title");
       if (metadata.artist) foundItems.push("Artist");
-      if (metadata.album) foundItems.push("Album");
-      if (metadata.year) foundItems.push("Year");
       if (metadata.artwork) foundItems.push("Artwork");
       
       setLogs((prev) => [
         ...prev, 
         `Metadata extraction ${foundItems.length > 0 ? "successful" : "found nothing"}!`,
-        foundItems.length > 0 ? `Found: ${foundItems.join(", ")}` : "",
-        `Title: ${metadata.title || "(not found)"}`,
+        foundItems.length > 0 ? `Found: ${foundItems.join(", ")}` : "",        `Title: ${metadata.title || "(not found)"}`,
         `Artist: ${metadata.artist || "(not found)"}`,
-        `Album: ${metadata.album || "(not found)"}`,
-        `Year: ${metadata.year || "(not found)"}`,
         `Artwork: ${metadata.artwork ? "Found" : "Not found"}`
       ]);
       
@@ -657,13 +609,10 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
     } catch (error) {
       console.error("Error extracting metadata:", error);
       setLogs((prev) => [...prev, `Error extracting metadata: ${error.message}`]);
-      
-      // Still create a basic metadata object with filename as title
+        // Still create a basic metadata object with filename as title
       const fallbackMetadata = {
         title: file.name.replace(/\.[^/.]+$/, ""), // Remove extension
         artist: "",
-        album: "",
-        year: null,
         artwork: null
       };
       
@@ -693,12 +642,9 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
             console.error("Error processing artwork:", error);
           }
         }
-        
-        // Add text metadata
+          // Add text metadata
         formData.append("title", extractedMetadata.title || "");
         formData.append("artist", extractedMetadata.artist || "");
-        formData.append("album", extractedMetadata.album || "");
-        formData.append("year", extractedMetadata.year || "");
       }
       
       setLogs((prev) => [...prev, "Preparing upload..."]);

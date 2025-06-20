@@ -1,7 +1,7 @@
 import React from "react";
 
 export default function BeatmapDetails({ beatmap }) {
-  // beatmap: { title, artist, album, year, bpm, mapper, has_artwork, name }
+  // beatmap: { title, artist, bpm, mapper, has_artwork, name }
   return (
     <div className="bm-background">
       <div className="bm-container">
@@ -40,20 +40,7 @@ export default function BeatmapDetails({ beatmap }) {
                 <h2>{beatmap.title || "Unknown Title"}</h2>
                 <div style={{ color: "#6c757d", fontSize: "1.25rem", marginBottom: 16 }}>
                   {beatmap.artist || "Unknown Artist"}
-                </div>
-                <ul style={{ listStyle: "none", padding: 0 }}>
-                  {beatmap.album && (
-                    <li>
-                      <span style={{ fontWeight: "bold", display: "inline-block", width: 80 }}>Album:</span>
-                      {beatmap.album}
-                    </li>
-                  )}
-                  {beatmap.year && (
-                    <li>
-                      <span style={{ fontWeight: "bold", display: "inline-block", width: 80 }}>Year:</span>
-                      {beatmap.year}
-                    </li>
-                  )}
+                </div>                <ul style={{ listStyle: "none", padding: 0 }}>
                   {beatmap.bpm && (
                     <li>
                       <span style={{ fontWeight: "bold", display: "inline-block", width: 80 }}>BPM:</span>
