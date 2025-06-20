@@ -238,8 +238,7 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
             }}
           />
         </div>
-        
-        <div style={{ marginBottom: "16px", textAlign: "left" }}>
+          <div style={{ marginBottom: "16px", textAlign: "left" }}>
           <div style={{ marginBottom: "8px" }}>Difficulty</div>
           <select
             name="difficulty"
@@ -257,6 +256,7 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
             <option value="EASY">Easy (0)</option>
             <option value="MEDIUM">Medium (1)</option>
             <option value="HARD">Hard (2)</option>
+            <option value="EXTREME">Extreme (3)</option>
           </select>
         </div>
         
@@ -480,9 +480,7 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
                   onChange={handleChange}
                   className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2"
                 />
-              </div>
-
-              <div>
+              </div>              <div>
                 <label className="block text-sm font-semibold mb-1">Difficulty:</label>
                 <select
                   name="difficulty"
@@ -493,6 +491,7 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
                   <option value="EASY">Easy (0)</option>
                   <option value="MEDIUM">Medium (1)</option>
                   <option value="HARD">Hard (2)</option>
+                  <option value="EXTREME">Extreme (3)</option>
                 </select>
               </div>
 
@@ -538,7 +537,7 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
           ) : (            <div className="space-y-2">
               <p><strong>Title:</strong> {beatmap.title}</p>
               <p><strong>Artist:</strong> {beatmap.artist}</p>
-              <p><strong>Difficulty:</strong> {beatmap.difficulty} ({['EASY', 'MEDIUM', 'HARD'][beatmap.difficulty] || 'EASY'})</p>
+              <p><strong>Difficulty:</strong> {beatmap.difficulty} ({['EASY', 'MEDIUM', 'HARD', 'EXTREME'][beatmap.difficulty] || 'EASY'})</p>
               <p><strong>Song Map:</strong> {beatmap.song_map} ({['VULCAN', 'DESERT', 'STORM'][beatmap.song_map] || 'VULCAN'})</p>
               <p><strong>Created:</strong> {new Date(beatmap.createdAt).toLocaleString()}</p>
             </div>
