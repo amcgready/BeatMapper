@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route, Link, useParams, Navigate, useNavigate } from "react-router-dom";
-import { FaUpload, FaMusic, FaTrash, FaPencilAlt, FaDownload, FaSave, FaTimes } from "react-icons/fa";
+import { FaUpload, FaMusic, FaTrash, FaPencilAlt, FaDownload, FaSave, FaTimes, FaFolder } from "react-icons/fa";
 import logo from "../logo.png";
 import { saveAs } from "file-saver";
 import "./App.css";
-import { extractMP3Metadata } from './utils/audioMetadata';
+import { extractAudioMetadata } from './utils/audioMetadata';
 
 // --- Improved Metadata Edit Modal Component ---
 function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metadata, setMetadata] = useState({
@@ -613,7 +613,7 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
     // Extract metadata from the file when selected
     setLogs((prev) => [...prev, "Extracting metadata from file..."]);
     try {
-      const metadata = await extractMP3Metadata(file);
+      const metadata = await extractAudioMetadata(file);
       
       // Log the extraction results
       const foundItems = [];      if (metadata.title) foundItems.push("Title");
@@ -692,7 +692,7 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
           if (data.status === "success") {            // Use extracted metadata if available, otherwise use server response or fallbacks
             const newBeatmap = {
               id: data.id,
-              title: extractedMetadata?.title || data.title || selectedFile.name.replace('.mp3', ''),
+              title: extractedMetadata?.title || data.title || selectedFile.name.replace(/\.(mp3|flac|wav|ogg)$/i, ''),
               artist: extractedMetadata?.artist || data.artist || "Unknown Artist",
               difficulty: data.difficulty || "EASY",
               song_map: data.song_map || "VULCAN",
@@ -713,7 +713,7 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
         } else {
           // Handle binary response (ZIP file download)
           const blob = await response.blob();
-          const filename = `${selectedFile.name.replace(".mp3", "")}_beatmap.zip`;
+          const filename = `${selectedFile.name.replace(/\.(mp3|flac|wav|ogg)$/i, '')}_beatmap.zip`;
           saveAs(blob, filename);
           
           setLogs((prev) => [...prev, `Downloaded beatmap package: ${filename}`, "Done!"]);
@@ -783,24 +783,29 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
           <img src={logo} alt="BeatMapper Logo" className="bm-logo" style={{ maxWidth: "200px" }} />
         </div>
         
-        {/* Upload section */}
-        <div className="bm-card w-full max-w-4xl mx-auto">
-          <h2 className="text-xl font-bold mb-4">Upload New Song</h2>
+        {/* Upload section */}        <div className="bm-card w-full max-w-4xl mx-auto">
+          <h2 className="text-xl font-bold mb-6">Upload New Song</h2>
+          
           <form onSubmit={handleUpload} style={{ width: "100%" }}>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".mp3"
-              onChange={handleFileChange}
-              className="bm-file-input"
-            />
-            <button
-              type="button"
-              className="bm-browse-btn mb-4"
-              onClick={() => fileInputRef.current.click()}
-            >
-              {selectedFile ? selectedFile.name : "Browse for MP3"}
-            </button>
+            {/* Audio File Section */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-white mb-3">
+                Audio File (MP3, OGG, FLAC, WAV)
+              </label>              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".mp3,.flac,.wav,.ogg"
+                onChange={handleFileChange}
+                className="bm-file-input"
+              />              <button
+                type="button"
+                onClick={() => fileInputRef.current.click()}
+                className="bm-browse-btn"
+              >
+                <FaFolder style={{ marginRight: 8 }} /> {selectedFile ? selectedFile.name : "Browse"}
+              </button>
+            </div>
+              {/* Upload Button */}
             <button
               type="submit"
               className="bm-upload-btn"
@@ -808,7 +813,7 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
             >
               {uploading ? (
                 <div className="flex items-center justify-center">
-                  <div className="animate-spin mr-2 h-5 w-5 border-2 border-white border-t-transparent rounded-full"></div>
+                  <div className="animate-spin mr-2 h-5 w-5 border-2 border-gray-800 border-t-transparent rounded-full"></div>
                   <span>Uploading...</span>
                 </div>
               ) : (
@@ -875,7 +880,7 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
 
           {beatmaps.length === 0 ? (
             <p style={{ textAlign: "center", padding: "1.5rem 0", color: "#9ca3af" }}>
-              No beatmaps yet. Upload an MP3 to create one.
+              No beatmaps yet. Upload an audio file to create one.
             </p>
           ) : (
             <div style={{ width: "100%" }}>

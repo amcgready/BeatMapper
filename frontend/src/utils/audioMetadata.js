@@ -2,16 +2,20 @@ import * as musicMetadata from 'music-metadata-browser';
 import { extractMetadataWithJSMediaTags } from './audioMetadataFallback';
 
 /**
- * Extracts metadata from an MP3 file using multiple methods
- * @param {File|Blob} file - The MP3 file to extract metadata from
+ * Extracts metadata from an audio file (MP3, FLAC, WAV, OGG) using multiple methods
+ * @param {File|Blob} file - The audio file to extract metadata from
  * @returns {Promise<Object>} - Object containing metadata and artwork
  */
-export async function extractMP3Metadata(file) {
+export async function extractAudioMetadata(file) {
   try {
     console.log("Starting metadata extraction for:", file.name);
     
+    // Get file extension to determine format
+    const fileExtension = file.name.toLowerCase().split('.').pop();
+    console.log("Detected file format:", fileExtension);
+    
     try {
-      // First try with music-metadata-browser
+      // First try with music-metadata-browser (supports multiple formats)
       const metadata = await musicMetadata.parseBlob(file, { skipPostHeaders: true });
       console.log("Raw metadata extracted with music-metadata-browser:", metadata);
         // Extract the required information
@@ -42,19 +46,24 @@ export async function extractMP3Metadata(file) {
     } catch (musicMetadataError) {
       console.error("music-metadata-browser extraction failed:", musicMetadataError);
     }
-    
-    // If music-metadata-browser failed or found no metadata, try jsmediatags
-    console.log("Falling back to jsmediatags extraction");
-    try {
-      const jsmediatagsMeta = await extractMetadataWithJSMediaTags(file);
-      console.log("Extracted metadata with jsmediatags:", jsmediatagsMeta);
-      return jsmediatagsMeta;
-    } catch (jsmediatagsError) {
-      console.error("jsmediatags extraction failed:", jsmediatagsError);
-      throw new Error("All metadata extraction methods failed");
+      // If music-metadata-browser failed or found no metadata, try jsmediatags (mainly for MP3)
+    if (fileExtension === 'mp3') {
+      console.log("Falling back to jsmediatags extraction for MP3");
+      try {
+        const jsmediatagsMeta = await extractMetadataWithJSMediaTags(file);
+        console.log("Extracted metadata with jsmediatags:", jsmediatagsMeta);
+        return jsmediatagsMeta;
+      } catch (jsmediatagsError) {
+        console.error("jsmediatags extraction failed:", jsmediatagsError);
+      }
     }
-  } catch (error) {
-    console.error('Error extracting MP3 metadata:', error);
+    
+    // If all methods failed, throw error
+    throw new Error("All metadata extraction methods failed");  } catch (error) {
+    console.error('Error extracting audio metadata:', error);
     throw new Error(`Failed to extract metadata: ${error.message}`);
   }
 }
+
+// Keep the old function name for backward compatibility
+export const extractMP3Metadata = extractAudioMetadata;

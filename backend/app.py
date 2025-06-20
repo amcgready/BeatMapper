@@ -12,7 +12,7 @@ from datetime import datetime
 import csv
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
-from processing.audio_converter import mp3_to_ogg
+from processing.audio_converter import mp3_to_ogg, convert_to_mp3
 from processing.preview_generator import generate_preview
 from processing.notes_generator import generate_notes_csv
 from processing.info_generator import generate_info_csv
@@ -145,11 +145,17 @@ def upload_file():
         if file.filename == '':
             logger.error("No selected file")
             return jsonify({"status": "error", "error": "No selected file"}), 400
+          # Check file extension - support multiple audio formats
+        supported_extensions = ['.mp3', '.flac', '.wav', '.ogg']
+        file_extension = None
+        for ext in supported_extensions:
+            if file.filename.lower().endswith(ext):
+                file_extension = ext
+                break
         
-        # Check file extension
-        if not file.filename.lower().endswith('.mp3'):
+        if not file_extension:
             logger.error(f"Invalid file format: {file.filename}")
-            return jsonify({"status": "error", "error": "Invalid file format, must be MP3"}), 400
+            return jsonify({"status": "error", "error": "Invalid file format, must be MP3, FLAC, WAV, or OGG"}), 400
             
         # Generate a unique ID for this beatmap
         beatmap_id = str(uuid.uuid4())
@@ -169,12 +175,27 @@ def upload_file():
         temp_dir = os.path.join(OUTPUT_DIR, f"temp_{beatmap_id}")
         logger.info(f"Creating temp directory: {temp_dir}")
         os.makedirs(temp_dir, exist_ok=True)
+          # First save the audio file to temp directory
+        original_audio_path = os.path.join(temp_dir, f'song{file_extension}')
+        logger.info(f"Saving audio file to: {original_audio_path}")
+        file.save(original_audio_path)
+        logger.info(f"Audio file saved successfully: {os.path.getsize(original_audio_path)} bytes")
         
-        # First save the MP3 file to temp directory
+        # Convert to MP3 if needed (for consistent processing)
         mp3_path = os.path.join(temp_dir, 'song.mp3')
-        logger.info(f"Saving MP3 to: {mp3_path}")
-        file.save(mp3_path)
-        logger.info(f"MP3 saved successfully: {os.path.getsize(mp3_path)} bytes")        # Extract metadata from the form
+        if file_extension != '.mp3':
+            logger.info(f"Converting {file_extension} to MP3 for processing")
+            try:
+                from processing.audio_converter import convert_to_mp3
+                convert_to_mp3(original_audio_path, mp3_path)
+                logger.info("Audio conversion to MP3 completed")
+            except Exception as e:
+                logger.error(f"Failed to convert audio to MP3: {e}", exc_info=True)
+                return jsonify({"status": "error", "error": f"Failed to convert audio format: {str(e)}"}), 500
+        else:
+            # If it's already MP3, just copy it
+            import shutil
+            shutil.copy2(original_audio_path, mp3_path)# Extract metadata from the form
         title = request.form.get('title', '')
         artist = request.form.get('artist', '')
         

@@ -66,19 +66,23 @@ body, html, #root {
 .bm-browse-btn {
   width: 100%;
   padding: 12px 0;
+  margin-top: 8px;
   margin-bottom: 16px;
-  background: #181c20;
-  color: #eee;
-  border: 1px solid #555;
+  background: #B8860B;
+  color: #000000;
+  border: none;
   border-radius: 6px;
   font-size: 1rem;
-  font-weight: 500;
+  font-weight: bold;
   cursor: pointer;
   transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .bm-browse-btn:hover {
-  background: #22282e;
+  background: #DAA520;
 }
 
 .bm-upload-btn {
@@ -100,6 +104,8 @@ body, html, #root {
 .bm-upload-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  background: #666 !important;
+  color: #999 !important;
 }
 
 .bm-logs {

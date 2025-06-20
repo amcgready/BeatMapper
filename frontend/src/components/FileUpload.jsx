@@ -1,24 +1,23 @@
 import React, { useState } from "react";
 import { FaUpload, FaMusic, FaImage, FaSpinner } from "react-icons/fa";
-import { extractMP3Metadata } from '../utils/audioMetadata';
+import { extractAudioMetadata } from '../utils/audioMetadata';
 
 function FileUpload({ onSuccess, setLog }) {
-  const [mp3, setMp3] = useState(null);
+  const [audioFile, setAudioFile] = useState(null);
   const [album, setAlbum] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     
-    setMp3(file);
+    setAudioFile(file);
     setLog("Extracting metadata...");
     setLoading(true);
     
     try {
       console.log("Starting metadata extraction process");
-      const metadata = await extractMP3Metadata(file);
+      const metadata = await extractAudioMetadata(file);
       
       console.log("Metadata returned to component:", metadata);
         // Check if we got any meaningful metadata
@@ -50,11 +49,10 @@ function FileUpload({ onSuccess, setLog }) {
   const handleAlbumChange = (e) => {
     setAlbum(e.target.files[0]);
   };
-
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!mp3) {
-      setError("Please select an MP3 file.");
+    if (!audioFile) {
+      setError("Please select an audio file.");
       return;
     }
     setError("");
@@ -65,13 +63,13 @@ function FileUpload({ onSuccess, setLog }) {
     <form
       onSubmit={handleSubmit}
       className="w-full flex flex-col items-center space-y-4"
-    >
-      <label className="w-full flex flex-col items-center bg-gray-900/70 border-2 border-dashed border-yellow-400 rounded-lg p-6 cursor-pointer hover:bg-gray-800 transition">
+    >      <label className="w-full flex flex-col items-center bg-gray-900/70 border-2 border-dashed border-yellow-400 rounded-lg p-6 cursor-pointer hover:bg-gray-800 transition">
         <FaMusic className="text-3xl text-yellow-300 mb-2" />
-        <span className="font-semibold mb-2">Select MP3 File</span>
+        <span className="font-semibold mb-2">Select Audio File</span>
+        <span className="text-sm text-gray-400 mb-2">Supported: MP3, FLAC, WAV, OGG</span>
         <input
           type="file"
-          accept=".mp3"
+          accept=".mp3,.flac,.wav,.ogg"
           onChange={handleFileChange}
           required
           className="hidden"
