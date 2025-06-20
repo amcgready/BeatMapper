@@ -881,12 +881,20 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
             <div style={{ width: "100%" }}>
               {beatmaps.map((beatmap, index) => (
                 <div key={beatmap.id}>
-                  {index > 0 && <hr style={{ borderColor: "#374151", margin: "0" }} />}
-                  <div style={{
+                  {index > 0 && <hr style={{ borderColor: "#374151", margin: "0" }} />}                  <div style={{
                     display: "flex",
                     alignItems: "center",
                     padding: "1rem",
                     backgroundColor: "#1f2937",
+                    borderLeft: `4px solid ${(() => {
+                      const difficultyColors = {
+                        0: "#22c55e", // Green for EASY
+                        1: "#eab308", // Yellow for MEDIUM  
+                        2: "#f97316", // Orange for HARD
+                        3: "#ef4444"  // Red for EXTREME
+                      };
+                      return difficultyColors[beatmap.difficulty] || "#6b7280";
+                    })()}`,
                   }}>
                     {/* Album Art */}
                     <div style={{
@@ -910,10 +918,37 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
                         "Album art"
                       )}
                     </div>
-                    
-                    {/* Song Info */}
+                      {/* Song Info */}
                     <div style={{ flexGrow: 1, textAlign: "left" }}>
-                      <div style={{ fontWeight: "500" }}>{beatmap.title}</div>
+                      <div style={{ 
+                        display: "flex", 
+                        alignItems: "center", 
+                        gap: "0.75rem",
+                        marginBottom: "0.25rem"
+                      }}>
+                        <div style={{ fontWeight: "500" }}>{beatmap.title}</div>
+                        <div style={{
+                          padding: "4px 8px",
+                          borderRadius: "4px",
+                          fontSize: "0.75rem",
+                          fontWeight: "bold",
+                          backgroundColor: (() => {
+                            const difficultyColors = {
+                              0: "#22c55e", // Green for EASY
+                              1: "#eab308", // Yellow for MEDIUM  
+                              2: "#f97316", // Orange for HARD
+                              3: "#ef4444"  // Red for EXTREME
+                            };
+                            return difficultyColors[beatmap.difficulty] || "#6b7280";
+                          })(),
+                          color: "white",
+                        }}>
+                          {(() => {
+                            const difficultyNames = ["EASY", "MEDIUM", "HARD", "EXTREME"];
+                            return difficultyNames[beatmap.difficulty] || "UNKNOWN";
+                          })()}
+                        </div>
+                      </div>
                       <div style={{ color: "#9ca3af" }}>{beatmap.artist}</div>
                     </div>
                     
