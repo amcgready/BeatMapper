@@ -121,8 +121,7 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
         maxHeight: "90vh",
         overflow: "auto",
         position: "relative"
-      }}>
-        <h2 className="text-xl font-bold text-center mb-6">Edit Song Metadata</h2>
+      }}>        <h2 className="text-xl font-bold text-center mb-6">Edit Song Metadata</h2>
         
         <button 
           onClick={onClose} 
@@ -139,6 +138,33 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
         >
           &#10005;
         </button>
+        
+        {/* Detected Difficulty Display */}
+        <div style={{
+          position: "absolute",
+          top: "60px",
+          right: "20px",
+          padding: "8px 12px",
+          borderRadius: "6px",
+          fontSize: "12px",
+          fontWeight: "bold",
+          backgroundColor: (() => {
+            const difficultyColors = {
+              0: "#22c55e", // Green for EASY
+              1: "#eab308", // Yellow for MEDIUM  
+              2: "#f97316", // Orange for HARD
+              3: "#ef4444"  // Red for EXTREME
+            };
+            return difficultyColors[beatmap?.difficulty] || "#6b7280";
+          })(),
+          color: "white",
+          border: "1px solid rgba(255,255,255,0.2)",
+          boxShadow: "0 2px 4px rgba(0,0,0,0.3)"        }}>
+          Detected Difficulty: {(() => {
+            const difficultyNames = ["EASY", "MEDIUM", "HARD", "EXTREME"];
+            return difficultyNames[beatmap?.difficulty] || "UNKNOWN";
+          })()}
+        </div>
         
         <div style={{
           display: "flex",
@@ -235,7 +261,7 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
           />        </div>
         
         <div style={{ marginBottom: "24px", textAlign: "left" }}>
-          <div style={{ marginBottom: "8px" }}>Song Map</div>
+          <div style={{ marginBottom: "8px" }}>Stage Select</div>
           <select
             name="song_map"
             value={metadata.song_map}
@@ -245,13 +271,12 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
               backgroundColor: "#1a1d20",
               border: "1px solid #444",
               borderRadius: "4px",
-              padding: "8px 12px",
-              color: "white",
+              padding: "8px 12px",              color: "white",
             }}
           >
-            <option value="VULCAN">Vulcan (0)</option>
-            <option value="DESERT">Desert (1)</option>
-            <option value="STORM">Storm (2)</option>
+            <option value="VULCAN">Vulcan</option>
+            <option value="DESERT">Desert</option>
+            <option value="STORM">Storm</option>
           </select>
         </div>
         
@@ -458,12 +483,11 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
                 <select
                   name="song_map"
                   value={editFields.song_map}
-                  onChange={handleChange}
-                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2"
+                  onChange={handleChange}                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2"
                 >
-                  <option value="VULCAN">Vulcan (0)</option>
-                  <option value="DESERT">Desert (1)</option>
-                  <option value="STORM">Storm (2)</option>
+                  <option value="VULCAN">Vulcan</option>
+                  <option value="DESERT">Desert</option>
+                  <option value="STORM">Storm</option>
                 </select>
               </div>
 
@@ -494,9 +518,8 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
             </div>
           ) : (            <div className="space-y-2">
               <p><strong>Title:</strong> {beatmap.title}</p>
-              <p><strong>Artist:</strong> {beatmap.artist}</p>
-              <p><strong>Difficulty:</strong> {beatmap.difficulty} ({['EASY', 'MEDIUM', 'HARD', 'EXTREME'][beatmap.difficulty] || 'EASY'})</p>
-              <p><strong>Song Map:</strong> {beatmap.song_map} ({['VULCAN', 'DESERT', 'STORM'][beatmap.song_map] || 'VULCAN'})</p>
+              <p><strong>Artist:</strong> {beatmap.artist}</p>              <p><strong>Difficulty:</strong> {['EASY', 'MEDIUM', 'HARD', 'EXTREME'][beatmap.difficulty] || 'EASY'}</p>
+              <p><strong>Song Map:</strong> {beatmap.song_map}</p>
               <p><strong>Created:</strong> {new Date(beatmap.createdAt).toLocaleString()}</p>
             </div>
           )}

@@ -554,8 +554,8 @@ def clear_all_beatmaps():
             app.logger.info(f"Items in output directory before clearing: {items_before}")
             deleted_count = 0
             errors = []
-              # First, identify all folders in the output directory that look like beatmap folders
-            # (We're using UUID format which should all be proper beatmap folders)
+            
+            # Delete all items except beatmaps.json
             for item in items_before:
                 item_path = os.path.join(OUTPUT_DIR, item)
                 
@@ -566,20 +566,13 @@ def clear_all_beatmaps():
                 
                 # Log item analysis for debugging
                 app.logger.info(f"Analyzing item: {item}")
-                app.logger.info(f"  Length: {len(item)}, Dashes: {item.count('-')}")
                 app.logger.info(f"  Is directory: {os.path.isdir(item_path)}")
-                app.logger.info(f"  Matches UUID pattern: {len(item) == 36 and item.count('-') == 4}")
-                app.logger.info(f"  Starts with temp_: {item.startswith('temp_')}")
+                app.logger.info(f"  Is file: {os.path.isfile(item_path)}")
                 
                 try:
-                    # If it's a directory and looks like a UUID (beatmap folder)
-                    if os.path.isdir(item_path) and (
-                        # Check if it looks like a UUID (8-4-4-4-12 format)
-                        (len(item) == 36 and item.count('-') == 4) or
-                        # Or other beatmap folders that might start with temp_
-                        item.startswith('temp_')
-                    ):
-                        app.logger.info(f"Removing beatmap directory: {item_path}")
+                    # Delete any file or directory that is NOT beatmaps.json
+                    if os.path.isdir(item_path):
+                        app.logger.info(f"Removing directory: {item_path}")
                         # Try to remove with retry logic for Windows file locking issues
                         max_retries = 3
                         for attempt in range(max_retries):
@@ -600,7 +593,6 @@ def clear_all_beatmaps():
                                     time.sleep(0.5)
                                 else:
                                     raise e
-                    # Or if it's just a file in the output folder (except beatmaps.json)
                     elif os.path.isfile(item_path):
                         app.logger.info(f"Removing file: {item_path}")
                         # Try to remove with retry logic
@@ -623,6 +615,8 @@ def clear_all_beatmaps():
                                     time.sleep(0.5)
                                 else:
                                     raise e
+                    else:
+                        app.logger.warning(f"Unknown item type, skipping: {item_path}")
                 except Exception as e:
                     error_msg = f"Error deleting {item_path}: {str(e)}"
                     app.logger.error(error_msg, exc_info=True)
@@ -670,8 +664,7 @@ def clear_all_beatmaps():
             return jsonify({
                 "status": "success",
                 "message": "Output directory was empty or missing, created fresh directory",
-                "itemsDeleted": 0
-            })
+                "itemsDeleted": 0            })
     except Exception as e:
         app.logger.error(f"Error in clear_all_beatmaps: {str(e)}", exc_info=True)
         return jsonify({
