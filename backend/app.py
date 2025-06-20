@@ -7,6 +7,7 @@ import logging
 import sys
 import traceback
 import tempfile
+import sqlite3
 from datetime import datetime
 import csv
 from flask import Flask, request, jsonify, send_file, send_from_directory
@@ -76,8 +77,41 @@ def cleanup_output_dir(days=7):
                 try:
                     os.remove(file_path)
                     logger.info(f"Deleted old file: {filename}")
-                except Exception as e:
-                    logger.error(f"Failed to delete {filename}: {e}")
+                except Exception as e:                    logger.error(f"Failed to delete {filename}: {e}")
+
+def parse_artist_title_metadata(title, artist):
+    """
+    Parse metadata that might have artist and title combined in the title field.
+    Handles formats like "Artist - Title" or "Artist: Title"
+    
+    Args:
+        title (str): The title field from metadata
+        artist (str): The artist field from metadata
+        
+    Returns:
+        tuple: (parsed_title, parsed_artist)
+    """
+    # If we already have both title and artist, return as-is
+    if title and artist and artist.strip() and not ("unknown" in artist.lower()):
+        return title.strip(), artist.strip()
+    
+    # If title contains common separators, try to split
+    if title and any(sep in title for sep in [' - ', ' – ', ' — ', ': ']):
+        for separator in [' - ', ' – ', ' — ', ': ']:
+            if separator in title:
+                parts = title.split(separator, 1)  # Split only on first occurrence
+                if len(parts) == 2:
+                    potential_artist = parts[0].strip()
+                    potential_title = parts[1].strip()
+                    
+                    # Make sure both parts are not empty and seem reasonable
+                    if potential_artist and potential_title and len(potential_artist) > 0 and len(potential_title) > 0:
+                        logger.info(f"Parsed '{title}' into artist: '{potential_artist}', title: '{potential_title}'")
+                        return potential_title, potential_artist
+                break
+    
+    # If we can't parse or don't have the format, return original values
+    return title.strip() if title else "", artist.strip() if artist else ""
 
 def get_db_connection():
     """Create a connection to the SQLite database."""
@@ -141,13 +175,21 @@ def upload_file():
         logger.info(f"Saving MP3 to: {mp3_path}")
         file.save(mp3_path)
         logger.info(f"MP3 saved successfully: {os.path.getsize(mp3_path)} bytes")
-        
-        # Extract metadata from the form
+          # Extract metadata from the form
         title = request.form.get('title', '')
         artist = request.form.get('artist', '')
         album = request.form.get('album', '')
         year = request.form.get('year', '')
-        logger.info(f"Metadata from request: title='{title}', artist='{artist}', album='{album}', year='{year}'")
+        
+        # Parse and clean up title/artist metadata in case they're combined
+        parsed_title, parsed_artist = parse_artist_title_metadata(title, artist)
+        
+        logger.info(f"Original metadata: title='{title}', artist='{artist}', album='{album}', year='{year}'")
+        logger.info(f"Parsed metadata: title='{parsed_title}', artist='{parsed_artist}'")
+        
+        # Use parsed values
+        title = parsed_title
+        artist = parsed_artist
         
         # Process album art if provided
         artwork_path = os.path.join(beatmap_dir, 'album.jpg')
@@ -194,32 +236,30 @@ def upload_file():
         except Exception as e:
             logger.error(f"Failed to generate notes.csv: {e}", exc_info=True)
             return jsonify({"status": "error", "error": f"Failed to generate notes.csv: {str(e)}"}), 500
-        
-        # Generate info.csv with metadata
+          # Generate info.csv with metadata
         info_path = os.path.join(beatmap_dir, 'info.csv')
         song_metadata = {
             "title": title or os.path.splitext(file.filename)[0],
             "artist": artist or "Unknown Artist",
-            "album": album or "Unknown Album",
-            "year": year or str(datetime.now().year)
+            "difficulty": "EASY",  # Default difficulty
+            "song_map": "VULCAN"   # Default song map
         }
         
         try:
             logger.info(f"Generating info.csv: {info_path}")
-            generate_info_csv(song_metadata, info_path)
+            generate_info_csv(song_metadata, info_path, ogg_path)  # Pass audio path for duration calculation
             logger.info(f"Info CSV generated: {os.path.getsize(info_path)} bytes")
         except Exception as e:
             logger.error(f"Failed to generate info.csv: {e}", exc_info=True)
             return jsonify({"status": "error", "error": f"Failed to generate info.csv: {str(e)}"}), 500
-        
-        # Add to beatmaps.json
+          # Add to beatmaps.json
         beatmaps_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
         beatmap = {
             "id": beatmap_id,
             "title": song_metadata["title"],
             "artist": song_metadata["artist"],
-            "album": song_metadata["album"],
-            "year": song_metadata["year"],
+            "difficulty": song_metadata["difficulty"],
+            "song_map": song_metadata["song_map"],
             "createdAt": datetime.now().isoformat()
         }
         
@@ -243,8 +283,7 @@ def upload_file():
         except Exception as e:
             logger.error(f"Failed to update beatmaps.json: {e}", exc_info=True)
             # Continue anyway since the beatmap files are created
-            
-        # Clean up temp directory
+              # Clean up temp directory
         try:
             logger.info(f"Cleaning up temp directory: {temp_dir}")
             shutil.rmtree(temp_dir)
@@ -258,8 +297,8 @@ def upload_file():
             "id": beatmap_id,
             "title": song_metadata["title"],
             "artist": song_metadata["artist"],
-            "album": song_metadata["album"],
-            "year": song_metadata["year"]
+            "difficulty": song_metadata["difficulty"],
+            "song_map": song_metadata["song_map"]
         })
                 
     except Exception as e:
@@ -346,8 +385,7 @@ def download_beatmap(beatmap_id):
                 if filename == "notes.csv":
                     with open(dest_path, 'w', newline='') as f:
                         writer = csv.writer(f)
-                        writer.writerow(["Time", "Lane", "Type", "Length", "Volume", "Pitch", "Effect"])
-                        # Generate a simple pattern for 60 seconds
+                        writer.writerow(["Time", "Lane", "Type", "Length", "Volume", "Pitch", "Effect"])                        # Generate a simple pattern for 60 seconds
                         for i in range(60):
                             # Basic pattern: kick, snare, hihat
                             if i % 2 == 0:
@@ -363,8 +401,9 @@ def download_beatmap(beatmap_id):
                     metadata_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
                     title = "Unknown"
                     artist = "Unknown"
-                    album = "Unknown"
-                    year = ""
+                    difficulty = 0  # EASY
+                    duration = 0
+                    song_map = 0  # VULCAN
                     
                     if os.path.exists(metadata_path):
                         try:
@@ -374,16 +413,26 @@ def download_beatmap(beatmap_id):
                                     if bm.get("id") == beatmap_id:
                                         title = bm.get("title", "Unknown")
                                         artist = bm.get("artist", "Unknown")
-                                        album = bm.get("album", "Unknown")
-                                        year = bm.get("year", "")
+                                        difficulty = bm.get("difficulty", 0)
+                                        song_map = bm.get("song_map", 0)
                                         break
                         except Exception as e:
                             app.logger.error(f"Error reading metadata: {str(e)}")
                     
+                    # Try to get duration from audio file if available
+                    song_ogg_path = os.path.join(beatmap_dir, "song.ogg")
+                    if os.path.exists(song_ogg_path):
+                        try:
+                            import librosa
+                            duration = round(librosa.get_duration(path=song_ogg_path), 2)
+                        except Exception as e:
+                            app.logger.error(f"Error getting audio duration: {str(e)}")
+                            duration = 0
+                    
                     with open(dest_path, 'w', newline='') as f:
                         writer = csv.writer(f)
-                        writer.writerow(["Title", "Artist", "Album", "Year"])
-                        writer.writerow([title, artist, album, year])
+                        writer.writerow(["Song Name", "Author Name", "Difficulty", "Song Duration", "Song Map"])
+                        writer.writerow([title, artist, difficulty, duration, song_map])
                 
                 elif filename == "album.jpg":
                     try:
@@ -595,12 +644,11 @@ def update_beatmap(beatmap_id):
         if not data:
             logger.error("No data provided in request")
             return jsonify({"status": "error", "error": "No data provided"}), 400
-            
-        # Required fields
+              # Required fields
         title = data.get('title')
         artist = data.get('artist')
-        album = data.get('album')
-        year = data.get('year')
+        difficulty = data.get('difficulty', 'EASY')  # Default to EASY if not provided
+        song_map = data.get('song_map', 'VULCAN')    # Default to VULCAN if not provided
         
         if not all([title, artist]):
             logger.error("Missing required metadata fields")
@@ -613,8 +661,7 @@ def update_beatmap(beatmap_id):
         if not os.path.exists(beatmap_dir):
             logger.error(f"Beatmap directory not found: {beatmap_dir}")
             return jsonify({"status": "error", "error": "Beatmap not found"}), 404
-            
-        # Update info.csv
+              # Update info.csv
         info_path = os.path.join(beatmap_dir, 'info.csv')
         try:
             logger.info(f"Updating info.csv: {info_path}")
@@ -623,12 +670,15 @@ def update_beatmap(beatmap_id):
             song_metadata = {
                 "title": title,
                 "artist": artist,
-                "album": album or "Unknown Album",
-                "year": year or ""
+                "difficulty": difficulty,
+                "song_map": song_map
             }
             
+            # Get audio file path for duration calculation
+            ogg_path = os.path.join(beatmap_dir, 'song.ogg')
+            
             # Generate/update info.csv file
-            generate_info_csv(song_metadata, info_path)
+            generate_info_csv(song_metadata, info_path, ogg_path)
             logger.info(f"Updated info.csv")
         except Exception as e:
             logger.error(f"Failed to update info.csv: {e}", exc_info=True)
@@ -647,16 +697,15 @@ def update_beatmap(beatmap_id):
                         beatmaps = json.load(f)
                 except json.JSONDecodeError:
                     logger.warning("Could not parse beatmaps.json, starting with empty list")
-            
-            # Find and update the specified beatmap
+              # Find and update the specified beatmap
             updated = False
             for i, beatmap in enumerate(beatmaps):
                 if beatmap.get('id') == beatmap_id:
                     # Update fields
                     beatmaps[i]['title'] = title
                     beatmaps[i]['artist'] = artist
-                    beatmaps[i]['album'] = album or beatmap.get('album', "Unknown Album")
-                    beatmaps[i]['year'] = year or beatmap.get('year', "")
+                    beatmaps[i]['difficulty'] = difficulty
+                    beatmaps[i]['song_map'] = song_map
                     beatmaps[i]['updatedAt'] = datetime.now().isoformat()
                     updated = True
                     break
@@ -668,8 +717,8 @@ def update_beatmap(beatmap_id):
                     "id": beatmap_id,
                     "title": title,
                     "artist": artist,
-                    "album": album or "Unknown Album",
-                    "year": year or "",
+                    "difficulty": difficulty,
+                    "song_map": song_map,
                     "createdAt": datetime.now().isoformat(),
                     "updatedAt": datetime.now().isoformat()
                 })
@@ -679,15 +728,14 @@ def update_beatmap(beatmap_id):
                 json.dump(beatmaps, f)
                 
             logger.info(f"Successfully updated beatmap in beatmaps.json")
-            
-            # Return the updated beatmap data
+              # Return the updated beatmap data
             return jsonify({
                 "status": "success",
                 "id": beatmap_id,
                 "title": title,
                 "artist": artist,
-                "album": album or "Unknown Album",
-                "year": year or ""
+                "difficulty": difficulty,
+                "song_map": song_map
             })
             
         except Exception as e:

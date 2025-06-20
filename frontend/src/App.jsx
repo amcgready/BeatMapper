@@ -7,26 +7,24 @@ import "./App.css";
 import { extractMP3Metadata } from './utils/audioMetadata';
 
 // --- Improved Metadata Edit Modal Component ---
-function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {
-  const [metadata, setMetadata] = useState({
+function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metadata, setMetadata] = useState({
     title: beatmap?.title || "",
     artist: beatmap?.artist || "",
-    year: beatmap?.year || "",
-    album: beatmap?.album || "",
+    difficulty: beatmap?.difficulty || "EASY",
+    song_map: beatmap?.song_map || "VULCAN",
   });
   
   const [albumArt, setAlbumArt] = useState(null);
   const [albumArtPreview, setAlbumArtPreview] = useState(beatmap?.artwork || null);
   const [isSaving, setIsSaving] = useState(false);
-  
-  // Reset form when beatmap changes
+    // Reset form when beatmap changes
   useEffect(() => {
     if (beatmap) {
       setMetadata({
         title: beatmap.title || "",
         artist: beatmap.artist || "",
-        year: beatmap.year || "",
-        album: beatmap.album || "",
+        difficulty: beatmap.difficulty || "EASY",
+        song_map: beatmap.song_map || "VULCAN",
       });
       setAlbumArtPreview(beatmap.artwork || null);
     }
@@ -63,12 +61,11 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {
         method: "PUT",  // Match the backend's expected method
         headers: {
           "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
+        },        body: JSON.stringify({
           title: metadata.title || "",
           artist: metadata.artist || "",
-          album: metadata.album || "",
-          year: metadata.year || ""
+          difficulty: metadata.difficulty || "EASY",
+          song_map: metadata.song_map || "VULCAN"
         })
       });
       
@@ -224,8 +221,7 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {
             }}
           />
         </div>
-        
-        <div style={{ marginBottom: "16px", textAlign: "left" }}>
+          <div style={{ marginBottom: "16px", textAlign: "left" }}>
           <div style={{ marginBottom: "8px" }}>Artist</div>
           <input
             type="text"
@@ -244,11 +240,10 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {
         </div>
         
         <div style={{ marginBottom: "16px", textAlign: "left" }}>
-          <div style={{ marginBottom: "8px" }}>Album</div>
-          <input
-            type="text"
-            name="album"
-            value={metadata.album}
+          <div style={{ marginBottom: "8px" }}>Difficulty</div>
+          <select
+            name="difficulty"
+            value={metadata.difficulty}
             onChange={handleInputChange}
             style={{
               width: "100%",
@@ -258,15 +253,18 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {
               padding: "8px 12px",
               color: "white",
             }}
-          />
+          >
+            <option value="EASY">Easy (0)</option>
+            <option value="MEDIUM">Medium (1)</option>
+            <option value="HARD">Hard (2)</option>
+          </select>
         </div>
         
         <div style={{ marginBottom: "24px", textAlign: "left" }}>
-          <div style={{ marginBottom: "8px" }}>Year</div>
-          <input
-            type="text"
-            name="year"
-            value={metadata.year}
+          <div style={{ marginBottom: "8px" }}>Song Map</div>
+          <select
+            name="song_map"
+            value={metadata.song_map}
             onChange={handleInputChange}
             style={{
               width: "100%",
@@ -276,7 +274,11 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {
               padding: "8px 12px",
               color: "white",
             }}
-          />
+          >
+            <option value="VULCAN">Vulcan (0)</option>
+            <option value="DESERT">Desert (1)</option>
+            <option value="STORM">Storm (2)</option>
+          </select>
         </div>
         
         <div style={{ 
@@ -345,12 +347,11 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
   const beatmap = beatmaps.find((b) => String(b.id) === id);
   const navigate = useNavigate();
 
-  const [editMode, setEditMode] = useState(false);
-  const [editFields, setEditFields] = useState({
+  const [editMode, setEditMode] = useState(false);  const [editFields, setEditFields] = useState({
     title: beatmap?.title || "",
     artist: beatmap?.artist || "",
-    album: beatmap?.album || "",
-    year: beatmap?.year || ""
+    difficulty: beatmap?.difficulty || "EASY",
+    song_map: beatmap?.song_map || "VULCAN"
   });
 
   const [uploadingMetadata, setUploadingMetadata] = useState(false);
@@ -373,13 +374,12 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
         method: "PUT",
         headers: {
           "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
+        },        body: JSON.stringify({
           id: beatmap.id,
           title: editFields.title,
           artist: editFields.artist,
-          album: editFields.album,
-          year: editFields.year
+          difficulty: editFields.difficulty,
+          song_map: editFields.song_map
         })
       });
 
@@ -471,9 +471,7 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
                   onChange={handleChange}
                   className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2"
                 />
-              </div>
-
-              <div>
+              </div>              <div>
                 <label className="block text-sm font-semibold mb-1">Artist:</label>
                 <input
                   type="text"
@@ -485,25 +483,31 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold mb-1">Album:</label>
-                <input
-                  type="text"
-                  name="album"
-                  value={editFields.album}
+                <label className="block text-sm font-semibold mb-1">Difficulty:</label>
+                <select
+                  name="difficulty"
+                  value={editFields.difficulty}
                   onChange={handleChange}
                   className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2"
-                />
+                >
+                  <option value="EASY">Easy (0)</option>
+                  <option value="MEDIUM">Medium (1)</option>
+                  <option value="HARD">Hard (2)</option>
+                </select>
               </div>
 
               <div>
-                <label className="block text-sm font-semibold mb-1">Year:</label>
-                <input
-                  type="text"
-                  name="year"
-                  value={editFields.year}
+                <label className="block text-sm font-semibold mb-1">Song Map:</label>
+                <select
+                  name="song_map"
+                  value={editFields.song_map}
                   onChange={handleChange}
                   className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2"
-                />
+                >
+                  <option value="VULCAN">Vulcan (0)</option>
+                  <option value="DESERT">Desert (1)</option>
+                  <option value="STORM">Storm (2)</option>
+                </select>
               </div>
 
               <div className="flex justify-end space-x-2 mt-4">
@@ -531,12 +535,11 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
                 </button>
               </div>
             </div>
-          ) : (
-            <div className="space-y-2">
+          ) : (            <div className="space-y-2">
               <p><strong>Title:</strong> {beatmap.title}</p>
               <p><strong>Artist:</strong> {beatmap.artist}</p>
-              <p><strong>Album:</strong> {beatmap.album}</p>
-              <p><strong>Year:</strong> {beatmap.year}</p>
+              <p><strong>Difficulty:</strong> {beatmap.difficulty} ({['EASY', 'MEDIUM', 'HARD'][beatmap.difficulty] || 'EASY'})</p>
+              <p><strong>Song Map:</strong> {beatmap.song_map} ({['VULCAN', 'DESERT', 'STORM'][beatmap.song_map] || 'VULCAN'})</p>
               <p><strong>Created:</strong> {new Date(beatmap.createdAt).toLocaleString()}</p>
             </div>
           )}
@@ -672,14 +675,13 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
           const data = await response.json();
           setLogs((prev) => [...prev, "Server processed file successfully"]);
           
-          if (data.status === "success") {
-            // Use extracted metadata if available, otherwise use server response or fallbacks
+          if (data.status === "success") {            // Use extracted metadata if available, otherwise use server response or fallbacks
             const newBeatmap = {
               id: data.id,
               title: extractedMetadata?.title || data.title || selectedFile.name.replace('.mp3', ''),
               artist: extractedMetadata?.artist || data.artist || "Unknown Artist",
-              album: extractedMetadata?.album || data.album || "Unknown Album",
-              year: extractedMetadata?.year || data.year || new Date().getFullYear().toString(),
+              difficulty: data.difficulty || "EASY",
+              song_map: data.song_map || "VULCAN",
               artwork: extractedMetadata?.artwork || data.artwork || null,
               createdAt: new Date().toISOString()
             };
