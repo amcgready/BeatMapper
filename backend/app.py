@@ -554,8 +554,7 @@ def clear_all_beatmaps():
             app.logger.info(f"Items in output directory before clearing: {items_before}")
             deleted_count = 0
             errors = []
-            
-            # First, identify all folders in the output directory that look like beatmap folders
+              # First, identify all folders in the output directory that look like beatmap folders
             # (We're using UUID format which should all be proper beatmap folders)
             for item in items_before:
                 item_path = os.path.join(OUTPUT_DIR, item)
@@ -564,6 +563,13 @@ def clear_all_beatmaps():
                 if item == 'beatmaps.json':
                     app.logger.info(f"Skipping beatmaps.json file")
                     continue
+                
+                # Log item analysis for debugging
+                app.logger.info(f"Analyzing item: {item}")
+                app.logger.info(f"  Length: {len(item)}, Dashes: {item.count('-')}")
+                app.logger.info(f"  Is directory: {os.path.isdir(item_path)}")
+                app.logger.info(f"  Matches UUID pattern: {len(item) == 36 and item.count('-') == 4}")
+                app.logger.info(f"  Starts with temp_: {item.startswith('temp_')}")
                 
                 try:
                     # If it's a directory and looks like a UUID (beatmap folder)
@@ -574,15 +580,49 @@ def clear_all_beatmaps():
                         item.startswith('temp_')
                     ):
                         app.logger.info(f"Removing beatmap directory: {item_path}")
-                        shutil.rmtree(item_path)
-                        app.logger.info(f"Successfully removed directory: {item_path}")
-                        deleted_count += 1
+                        # Try to remove with retry logic for Windows file locking issues
+                        max_retries = 3
+                        for attempt in range(max_retries):
+                            try:
+                                shutil.rmtree(item_path)
+                                app.logger.info(f"Successfully removed directory: {item_path}")
+                                deleted_count += 1
+                                break
+                            except PermissionError as pe:
+                                if attempt < max_retries - 1:
+                                    app.logger.warning(f"Permission error on attempt {attempt + 1}, retrying: {pe}")
+                                    time.sleep(0.5)  # Wait 500ms before retry
+                                else:
+                                    raise pe
+                            except Exception as e:
+                                if attempt < max_retries - 1:
+                                    app.logger.warning(f"Error on attempt {attempt + 1}, retrying: {e}")
+                                    time.sleep(0.5)
+                                else:
+                                    raise e
                     # Or if it's just a file in the output folder (except beatmaps.json)
                     elif os.path.isfile(item_path):
                         app.logger.info(f"Removing file: {item_path}")
-                        os.unlink(item_path)
-                        app.logger.info(f"Successfully removed file: {item_path}")
-                        deleted_count += 1
+                        # Try to remove with retry logic
+                        max_retries = 3
+                        for attempt in range(max_retries):
+                            try:
+                                os.unlink(item_path)
+                                app.logger.info(f"Successfully removed file: {item_path}")
+                                deleted_count += 1
+                                break
+                            except PermissionError as pe:
+                                if attempt < max_retries - 1:
+                                    app.logger.warning(f"Permission error on attempt {attempt + 1}, retrying: {pe}")
+                                    time.sleep(0.5)
+                                else:
+                                    raise pe
+                            except Exception as e:
+                                if attempt < max_retries - 1:
+                                    app.logger.warning(f"Error on attempt {attempt + 1}, retrying: {e}")
+                                    time.sleep(0.5)
+                                else:
+                                    raise e
                 except Exception as e:
                     error_msg = f"Error deleting {item_path}: {str(e)}"
                     app.logger.error(error_msg, exc_info=True)
