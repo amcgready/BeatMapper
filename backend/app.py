@@ -177,7 +177,29 @@ def upload_file():
         audio_path = os.path.join(temp_dir, f'song{file_extension}')
         logger.info(f"Saving audio file to: {audio_path}")
         file.save(audio_path)
-        logger.info(f"Audio file saved successfully: {os.path.getsize(audio_path)} bytes")# Extract metadata from the form
+        logger.info(f"Audio file saved successfully: {os.path.getsize(audio_path)} bytes")
+
+        # Handle optional MIDI file
+        midi_path = None
+        if 'midi_file' in request.files:
+            midi_file = request.files['midi_file']
+            if midi_file.filename and midi_file.filename != '':
+                logger.info(f"Received MIDI file: {midi_file.filename}")
+                
+                # Check MIDI file extension
+                if midi_file.filename.lower().endswith(('.mid', '.midi')):
+                    midi_path = os.path.join(temp_dir, f'song.mid')
+                    logger.info(f"Saving MIDI file to: {midi_path}")
+                    midi_file.save(midi_path)
+                    logger.info(f"MIDI file saved successfully: {os.path.getsize(midi_path)} bytes")
+                else:
+                    logger.warning(f"Invalid MIDI file format: {midi_file.filename}")
+            else:
+                logger.info("Empty MIDI file received, skipping")
+        else:
+            logger.info("No MIDI file provided")
+
+        # Extract metadata from the form
         title = request.form.get('title', '')
         artist = request.form.get('artist', '')
         
@@ -225,12 +247,13 @@ def upload_file():
         except Exception as e:
             logger.error(f"Failed to generate preview: {e}", exc_info=True)
             return jsonify({"status": "error", "error": f"Failed to generate preview: {str(e)}"}), 500
-        
-        # Generate notes.csv using original audio file
+          # Generate notes.csv using original audio file
         notes_path = os.path.join(beatmap_dir, 'notes.csv')
         try:
             logger.info(f"Generating notes.csv: {notes_path}")
-            generate_notes_csv(audio_path, None, notes_path)
+            if midi_path:
+                logger.info(f"Using MIDI file for enhanced beat detection: {midi_path}")
+            generate_notes_csv(audio_path, midi_path, notes_path)  # Pass MIDI path as template_path
             logger.info(f"Notes CSV generated: {os.path.getsize(notes_path)} bytes")
         except Exception as e:
             logger.error(f"Failed to generate notes.csv: {e}", exc_info=True)

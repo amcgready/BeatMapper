@@ -37,14 +37,70 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def generate_notes_csv(song_path, template_path, output_path):
+def extract_midi_beats(midi_path):
+    """
+    Extract beat timings from a MIDI file.
+    
+    Args:
+        midi_path: Path to the MIDI file
+        
+    Returns:
+        list: List of beat times in seconds
+    """
+    beats = []
+    
+    try:
+        # Try to import mido for MIDI processing
+        import mido
+        
+        # Open the MIDI file
+        mid = mido.MidiFile(midi_path)
+        
+        # Get the ticks per beat (resolution)
+        ticks_per_beat = mid.ticks_per_beat
+        
+        # Track time and tempo
+        current_time = 0  # in ticks
+        current_tempo = 500000  # microseconds per beat (default = 120 BPM)
+        
+        # Process all tracks
+        for track in mid.tracks:
+            track_time = 0
+            
+            for msg in track:
+                track_time += msg.time
+                
+                # Check for tempo changes
+                if msg.type == 'set_tempo':
+                    current_tempo = msg.tempo
+                
+                # Check for note events (note_on with velocity > 0)
+                elif msg.type == 'note_on' and msg.velocity > 0:
+                    # Convert ticks to seconds
+                    seconds = mido.tick2second(track_time, ticks_per_beat, current_tempo)
+                    beats.append(seconds)
+        
+        # Remove duplicates and sort
+        beats = sorted(list(set(beats)))
+        
+        logger.info(f"Extracted {len(beats)} note events from MIDI file")
+        return beats
+        
+    except ImportError:
+        logger.warning("mido library not available for MIDI processing")
+        return []
+    except Exception as e:
+        logger.error(f"Error processing MIDI file: {e}")
+        return []
+
+def generate_notes_csv(song_path, midi_path, output_path):
     """
     Generate notes based on audio analysis and beat detection.
     This is the standard generator that balances accuracy and performance.
     
     Args:
         song_path: Path to the audio file
-        template_path: Optional path to a template file (not used currently)
+        midi_path: Optional path to a MIDI file for enhanced beat detection
         output_path: Path where the notes.csv will be saved
         
     Returns:
@@ -52,6 +108,17 @@ def generate_notes_csv(song_path, template_path, output_path):
     """
     try:
         logger.info(f"Generating standard drum notes for {os.path.basename(song_path)}")
+        
+        # Check if MIDI file is provided for enhanced detection
+        midi_beats = None
+        if midi_path and os.path.exists(midi_path):
+            logger.info(f"MIDI file provided: {os.path.basename(midi_path)}")
+            try:
+                midi_beats = extract_midi_beats(midi_path)
+                logger.info(f"Extracted {len(midi_beats)} MIDI beats")
+            except Exception as e:
+                logger.warning(f"Failed to process MIDI file: {e}")
+                logger.info("Continuing with audio-only analysis")
         
         # Check if we can use librosa for analysis
         try:
@@ -90,12 +157,22 @@ def generate_notes_csv(song_path, template_path, output_path):
                     (1000, 4000), # Hi-hats/cymbals
                     (4000, 8000), # Rides/crashes
                 ]
-                
-                # Generate notes based on detected beats and audio analysis
-                success = generate_drum_synced_notes(
-                    y_for_analysis, sr, song_duration, tempo, beats, 
-                    output_path, optimized_bands
-                )
+                  # Generate notes based on detected beats and audio analysis
+                # Use MIDI beats if available, otherwise use librosa beats
+                if midi_beats and len(midi_beats) > 0:
+                    logger.info("Using MIDI beats for enhanced accuracy")
+                    # Convert MIDI beat times to frame indices for compatibility
+                    midi_beat_frames = librosa.time_to_frames(midi_beats, sr=sr)
+                    success = generate_drum_synced_notes(
+                        y_for_analysis, sr, song_duration, tempo, midi_beat_frames, 
+                        output_path, optimized_bands, use_midi=True
+                    )
+                else:
+                    logger.info("Using audio-detected beats")
+                    success = generate_drum_synced_notes(
+                        y_for_analysis, sr, song_duration, tempo, beats, 
+                        output_path, optimized_bands, use_midi=False
+                    )
                 
                 if success:
                     logger.info(f"Successfully generated notes.csv at {output_path}")
@@ -155,16 +232,26 @@ def try_extract_drums_with_spleeter(song_path):
         logger.warning(f"Error using spleeter: {str(e)}")
         return None
 
-def generate_drum_synced_notes(y, sr, song_duration, tempo, beats, output_path, optimized_bands=None):
+def generate_drum_synced_notes(y, sr, song_duration, tempo, beats, output_path, optimized_bands=None, use_midi=False):
     """
     Generate notes based on detected beats and multi-band analysis.
     This is the main algorithm for the standard generator.
+    
+    Args:
+        use_midi: Whether the beats come from MIDI (True) or audio analysis (False)
     """
     try:
         import librosa
         
         # Convert beats from frames to time
-        beat_times = librosa.frames_to_time(beats, sr=sr)
+        if use_midi:
+            # If using MIDI, beats are already frame indices from time conversion
+            beat_times = librosa.frames_to_time(beats, sr=sr)
+            logger.info(f"Using {len(beat_times)} MIDI-derived beat times")
+        else:
+            # Audio-detected beats are frame indices
+            beat_times = librosa.frames_to_time(beats, sr=sr)
+            logger.info(f"Using {len(beat_times)} audio-detected beat times")
         
         # Get seconds per beat
         spb = 60 / tempo

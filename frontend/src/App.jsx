@@ -546,10 +546,11 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
 }
 
 // --- Home Page ---
-function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
-  const fileInputRef = useRef();
+function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {  const fileInputRef = useRef();
+  const midiInputRef = useRef();
   const logsRef = useRef(); // Add ref for logs container
   const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedMidiFile, setSelectedMidiFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const navigate = useNavigate();
   
@@ -651,9 +652,14 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
     e.preventDefault();
     if (selectedFile) {
       setUploading(true);
-      setLogs((prev) => [...prev, `Uploading: ${selectedFile.name}`]);
-      const formData = new FormData();
+      setLogs((prev) => [...prev, `Uploading: ${selectedFile.name}`]);      const formData = new FormData();
       formData.append("file", selectedFile);
+      
+      // Add MIDI file if selected
+      if (selectedMidiFile) {
+        formData.append("midi_file", selectedMidiFile);
+        setLogs((prev) => [...prev, `Including MIDI file: ${selectedMidiFile.name}`]);
+      }
       
       // Add metadata to form if available
       if (extractedMetadata) {
@@ -721,16 +727,27 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
           setLogs((prev) => [...prev, `Downloaded beatmap package: ${filename}`, "Done!"]);
         }
       } catch (err) {
-        setLogs((prev) => [...prev, `Upload failed: ${err.message}`, "Done!"]);
-      } finally {
+        setLogs((prev) => [...prev, `Upload failed: ${err.message}`, "Done!"]);      } finally {
         setUploading(false);
         setSelectedFile(null);
+        setSelectedMidiFile(null);
         setExtractedMetadata(null);
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
+        if (midiInputRef.current) {
+          midiInputRef.current.value = "";
+        }
       }
     }
+  };
+
+  const handleMidiFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    setSelectedMidiFile(file);
+    setLogs((prev) => [...prev, `Selected MIDI file: ${file.name}`]);
   };
 
   // Add handler for metadata updates
@@ -778,7 +795,7 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
   };
 
   return (    <div className="bm-background min-h-screen pb-12">
-      <div className="bm-container pt-24" style={{ maxWidth: "100%", padding: "0 20px", paddingTop: "6rem" }}>
+      <div className="bm-container pt-32" style={{ maxWidth: "100%", padding: "0 20px", paddingTop: "8rem" }}>
         {/* Logo with more space */}
         <div className="flex justify-center mb-8">
           <img src={logo} alt="BeatMapper Logo" className="bm-logo" style={{ maxWidth: "200px" }} />
@@ -809,7 +826,57 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
                 </span>
               </button>
             </div>
-              {/* Upload Button */}
+            
+            {/* MIDI File Section - Optional */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-white mb-2">
+                MIDI File (Optional)
+              </label>
+              <p className="text-xs text-gray-400 mb-3">
+                Upload a MIDI file to improve beat detection accuracy
+              </p>
+              
+              <input
+                ref={midiInputRef}
+                type="file"
+                accept=".mid,.midi"
+                onChange={handleMidiFileChange}
+                className="bm-file-input"
+              />
+              
+              <button
+                type="button"
+                onClick={() => midiInputRef.current.click()}
+                className="bm-browse-btn"
+                style={{ 
+                  background: selectedMidiFile ? "#4A5568" : "#B8860B",
+                  opacity: selectedMidiFile ? 0.9 : 1
+                }}
+              >
+                <FaMusic style={{ marginRight: 8 }} /> 
+                <span style={{ fontWeight: selectedMidiFile ? 'normal' : 'bold' }}>
+                  {selectedMidiFile ? selectedMidiFile.name : "Browse MIDI (Optional)"}
+                </span>
+              </button>
+              
+              {selectedMidiFile && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedMidiFile(null);
+                    if (midiInputRef.current) {
+                      midiInputRef.current.value = "";
+                    }
+                    setLogs((prev) => [...prev, "MIDI file removed"]);
+                  }}
+                  className="text-red-400 hover:text-red-300 text-sm mt-2 block"
+                >
+                  Remove MIDI file
+                </button>
+              )}
+            </div>
+
+            {/* Upload Button */}
             <button
               type="submit"
               className="bm-upload-btn"
