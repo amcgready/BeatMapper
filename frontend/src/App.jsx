@@ -1017,11 +1017,24 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {  const fileI
                             };
                             return difficultyColors[beatmap.difficulty] || "#6b7280";
                           })(),
-                          color: "white",
-                        }}>
+                          color: "white",                        }}>
                           {(() => {
                             const difficultyNames = ["EASY", "MEDIUM", "HARD", "EXTREME"];
                             return difficultyNames[beatmap.difficulty] || "UNKNOWN";
+                          })()}
+                        </div>
+                        <div style={{
+                          padding: "4px 8px",
+                          borderRadius: "4px",
+                          fontSize: "0.75rem",
+                          fontWeight: "bold",
+                          backgroundColor: "#4f46e5", // Purple for stage
+                          color: "white",
+                        }}>
+                          {(() => {
+                            const stageNames = ["VULCAN", "DESERT", "STORM"];
+                            const songMapIndex = parseInt(beatmap.song_map) || 0;
+                            return stageNames[songMapIndex] || "UNKNOWN";
                           })()}
                         </div>
                       </div>
