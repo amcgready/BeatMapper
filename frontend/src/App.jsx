@@ -777,9 +777,8 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
     }
   };
 
-  return (
-    <div className="bm-background min-h-screen pb-12">
-      <div className="bm-container pt-16" style={{ maxWidth: "100%", padding: "0 20px" }}>
+  return (    <div className="bm-background min-h-screen pb-12">
+      <div className="bm-container pt-24" style={{ maxWidth: "100%", padding: "0 20px", paddingTop: "6rem" }}>
         {/* Logo with more space */}
         <div className="flex justify-center mb-8">
           <img src={logo} alt="BeatMapper Logo" className="bm-logo" style={{ maxWidth: "200px" }} />
