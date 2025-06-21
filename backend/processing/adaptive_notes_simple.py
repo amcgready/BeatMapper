@@ -84,13 +84,17 @@ def generate_adaptive_notes_csv(song_path, midi_path, output_path, target_diffic
             note_candidates = sorted(list(set([round(t, 2) for t in note_candidates])))
             
             logger.info(f"Generated {len(note_candidates)} note candidates")
-            
-            # Select subset to match target count
+              # Select subset to match target count
             if len(note_candidates) > target_note_count:
-                # For EASY/MEDIUM: take evenly spaced notes
-                if target_difficulty in ["EASY", "MEDIUM"]:
-                    step = len(note_candidates) / target_note_count
-                    selected_notes = [note_candidates[int(i * step)] for i in range(target_note_count)]
+                # For EASY: take every Nth beat to reduce density while preserving musical timing
+                if target_difficulty == "EASY":
+                    # Take every 3rd or 4th beat to maintain musical feel but reduce density
+                    step = max(2, len(note_candidates) // target_note_count)
+                    selected_notes = note_candidates[::step][:target_note_count]
+                elif target_difficulty == "MEDIUM":
+                    # Take every 2nd beat  
+                    step = max(2, len(note_candidates) // target_note_count)
+                    selected_notes = note_candidates[::step][:target_note_count]
                 else:
                     # For HARD/EXTREME: take all available up to target
                     selected_notes = note_candidates[:target_note_count]

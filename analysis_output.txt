@@ -1,0 +1,8 @@
+=== BEAT TRACKING ANALYSIS ===
+Analyzing: c:\Users\hypes\OneDrive\Desktop\Projects\BeatMapper\output\68e7e36e-b6ba-4b9d-b01a-4c4717c7ddc3\song.ogg
+Loading audio...
+Duration: 154.85 seconds
+Sample rate: 44100 Hz
+
+=== BEAT TRACKING TEST ===
+Error: 'charmap' codec can't encode character '\u274c' in position 0: character maps to <undefined>
