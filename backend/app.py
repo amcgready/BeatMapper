@@ -10,12 +10,11 @@ import tempfile
 import sqlite3
 from datetime import datetime
 import csv
-from flask import Flask, request, jsonify, send_file, send_from_directory
-from werkzeug.utils import secure_filename
-from processing.audio_converter import mp3_to_ogg, convert_to_mp3
+from flask import Flask, request, jsonify, send_file
+from processing.audio_converter import audio_to_ogg
 from processing.preview_generator import generate_preview
 from processing.notes_generator import generate_notes_csv
-from processing.info_generator import generate_info_csv
+from processing.info_generator import generate_info_csv, DIFFICULTY_MAP, SONG_MAP_MAP, INFO_HEADER
 from flask_cors import CORS
 
 # Set up log file path with absolute path
@@ -174,28 +173,11 @@ def upload_file():
         # Create a temp directory for processing
         temp_dir = os.path.join(OUTPUT_DIR, f"temp_{beatmap_id}")
         logger.info(f"Creating temp directory: {temp_dir}")
-        os.makedirs(temp_dir, exist_ok=True)
-          # First save the audio file to temp directory
-        original_audio_path = os.path.join(temp_dir, f'song{file_extension}')
-        logger.info(f"Saving audio file to: {original_audio_path}")
-        file.save(original_audio_path)
-        logger.info(f"Audio file saved successfully: {os.path.getsize(original_audio_path)} bytes")
-        
-        # Convert to MP3 if needed (for consistent processing)
-        mp3_path = os.path.join(temp_dir, 'song.mp3')
-        if file_extension != '.mp3':
-            logger.info(f"Converting {file_extension} to MP3 for processing")
-            try:
-                from processing.audio_converter import convert_to_mp3
-                convert_to_mp3(original_audio_path, mp3_path)
-                logger.info("Audio conversion to MP3 completed")
-            except Exception as e:
-                logger.error(f"Failed to convert audio to MP3: {e}", exc_info=True)
-                return jsonify({"status": "error", "error": f"Failed to convert audio format: {str(e)}"}), 500
-        else:
-            # If it's already MP3, just copy it
-            import shutil
-            shutil.copy2(original_audio_path, mp3_path)# Extract metadata from the form
+        os.makedirs(temp_dir, exist_ok=True)          # Save the audio file to temp directory with original format
+        audio_path = os.path.join(temp_dir, f'song{file_extension}')
+        logger.info(f"Saving audio file to: {audio_path}")
+        file.save(audio_path)
+        logger.info(f"Audio file saved successfully: {os.path.getsize(audio_path)} bytes")# Extract metadata from the form
         title = request.form.get('title', '')
         artist = request.form.get('artist', '')
         
@@ -224,16 +206,15 @@ def upload_file():
         else:
             logger.info("No artwork provided, creating default")
             create_default_artwork(artwork_path)
-        
-        # Convert MP3 to OGG and save directly to beatmap directory
+          # Convert audio to OGG and save directly to beatmap directory
         ogg_path = os.path.join(beatmap_dir, 'song.ogg')
         try:
-            logger.info(f"Converting MP3 to OGG: {mp3_path} -> {ogg_path}")
-            mp3_to_ogg(mp3_path, ogg_path)
+            logger.info(f"Converting audio to OGG: {audio_path} -> {ogg_path}")
+            audio_to_ogg(audio_path, ogg_path)
             logger.info(f"Converted to OGG: {os.path.getsize(ogg_path)} bytes")
         except Exception as e:
-            logger.error(f"Failed to convert MP3 to OGG: {e}", exc_info=True)
-            return jsonify({"status": "error", "error": f"Failed to convert MP3 to OGG: {str(e)}"}), 500
+            logger.error(f"Failed to convert audio to OGG: {e}", exc_info=True)
+            return jsonify({"status": "error", "error": f"Failed to convert audio to OGG: {str(e)}"}), 500
         
         # Generate preview OGG
         preview_path = os.path.join(beatmap_dir, 'preview.ogg')
@@ -245,11 +226,11 @@ def upload_file():
             logger.error(f"Failed to generate preview: {e}", exc_info=True)
             return jsonify({"status": "error", "error": f"Failed to generate preview: {str(e)}"}), 500
         
-        # Generate notes.csv
+        # Generate notes.csv using original audio file
         notes_path = os.path.join(beatmap_dir, 'notes.csv')
         try:
             logger.info(f"Generating notes.csv: {notes_path}")
-            generate_notes_csv(mp3_path, None, notes_path)
+            generate_notes_csv(audio_path, None, notes_path)
             logger.info(f"Notes CSV generated: {os.path.getsize(notes_path)} bytes")
         except Exception as e:
             logger.error(f"Failed to generate notes.csv: {e}", exc_info=True)
@@ -705,11 +686,10 @@ def update_beatmap(beatmap_id):
         
         if not data:
             logger.error("No data provided in request")
-            return jsonify({"status": "error", "error": "No data provided"}), 400
-              # Required fields
+            return jsonify({"status": "error", "error": "No data provided"}), 400        # Required fields
         title = data.get('title')
         artist = data.get('artist')
-        difficulty = data.get('difficulty', 'EASY')  # Default to EASY if not provided
+        difficulty = data.get('difficulty')  # Don't default here
         song_map = data.get('song_map', 'VULCAN')    # Default to VULCAN if not provided
         
         if not all([title, artist]):
@@ -723,25 +703,61 @@ def update_beatmap(beatmap_id):
         if not os.path.exists(beatmap_dir):
             logger.error(f"Beatmap directory not found: {beatmap_dir}")
             return jsonify({"status": "error", "error": "Beatmap not found"}), 404
-              # Update info.csv
+            
+        # If difficulty is not provided, read the current difficulty from info.csv to preserve it
+        if difficulty is None:
+            info_path = os.path.join(beatmap_dir, 'info.csv')
+            if os.path.exists(info_path):
+                try:
+                    with open(info_path, 'r') as f:
+                        reader = csv.DictReader(f)
+                        for row in reader:
+                            current_difficulty = int(row['Difficulty'])
+                            # Convert numeric back to string for consistency
+                            difficulty_names = ['EASY', 'MEDIUM', 'HARD', 'EXTREME']
+                            difficulty = difficulty_names[current_difficulty] if 0 <= current_difficulty < 4 else 'EASY'
+                            break
+                except Exception as e:
+                    logger.warning(f"Could not read current difficulty from info.csv: {e}")
+                    difficulty = 'EASY'  # Fallback
+            else:
+                difficulty = 'EASY'  # Fallback if no info.csv exists        # Update info.csv
         info_path = os.path.join(beatmap_dir, 'info.csv')
         try:
             logger.info(f"Updating info.csv: {info_path}")
             
-            # Create updated metadata dictionary
-            song_metadata = {
-                "title": title,
-                "artist": artist,
-                "difficulty": difficulty,
-                "song_map": song_map
-            }
-              # Get audio file path for duration calculation
-            ogg_path = os.path.join(beatmap_dir, 'song.ogg')
-            notes_csv_path = os.path.join(beatmap_dir, 'notes.csv')
+            # Read current info.csv to preserve existing values
+            current_data = {}
+            if os.path.exists(info_path):
+                with open(info_path, 'r') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        current_data = dict(row)
+                        break
             
-            # Generate/update info.csv file (don't auto-detect since user is manually setting)
-            generate_info_csv(song_metadata, info_path, ogg_path, notes_csv_path, auto_detect_difficulty=False)
-            logger.info(f"Updated info.csv")
+            # Update only the fields that were provided, preserve others
+            current_data['Song Name'] = title
+            current_data['Author Name'] = artist
+            current_data['Song Map'] = str(SONG_MAP_MAP.get(song_map.upper(), 0) if isinstance(song_map, str) else song_map)
+            
+            # Only update difficulty if it was explicitly provided (not defaulted)
+            if difficulty and difficulty != 'EASY' or data.get('difficulty') is not None:
+                current_data['Difficulty'] = str(DIFFICULTY_MAP.get(difficulty.upper(), 0) if isinstance(difficulty, str) else difficulty)
+            # Otherwise, keep the existing difficulty value
+            
+            # Write the updated info.csv
+            with open(info_path, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(INFO_HEADER)
+                writer.writerow([
+                    current_data.get('Song Name', ''),
+                    current_data.get('Author Name', ''),
+                    current_data.get('Difficulty', '0'),
+                    current_data.get('Song Duration', '0'),
+                    current_data.get('Song Map', '0')
+                ])
+                
+            logger.info(f"Updated info.csv - preserved difficulty: {current_data.get('Difficulty', '0')}")
         except Exception as e:
             logger.error(f"Failed to update info.csv: {e}", exc_info=True)
             return jsonify({"status": "error", "error": f"Failed to update info.csv: {str(e)}"}), 500

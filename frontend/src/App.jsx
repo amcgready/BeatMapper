@@ -61,6 +61,7 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
         },        body: JSON.stringify({
           title: metadata.title || "",
           artist: metadata.artist || "",
+          difficulty: metadata.difficulty || "EASY", // Preserve current difficulty
           song_map: metadata.song_map || "VULCAN"
         })
       });
@@ -376,6 +377,7 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
           id: beatmap.id,
           title: editFields.title,
           artist: editFields.artist,
+          difficulty: editFields.difficulty || beatmap.difficulty || "EASY", // Preserve current difficulty
           song_map: editFields.song_map
         })
       });
@@ -802,7 +804,10 @@ function Home({ beatmaps, setBeatmaps, logs, setLogs, onDelete }) {
                 onClick={() => fileInputRef.current.click()}
                 className="bm-browse-btn"
               >
-                <FaFolder style={{ marginRight: 8 }} /> {selectedFile ? selectedFile.name : "Browse"}
+                <FaFolder style={{ marginRight: 8 }} /> 
+                <span style={{ fontWeight: selectedFile ? 'normal' : 'bold' }}>
+                  {selectedFile ? selectedFile.name : "Browse"}
+                </span>
               </button>
             </div>
               {/* Upload Button */}

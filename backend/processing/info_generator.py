@@ -56,15 +56,16 @@ def validate_metadata(song_metadata):
     # Basic metadata
     validated["title"] = str(song_metadata.get("title", "")).strip()
     validated["artist"] = str(song_metadata.get("artist", "")).strip()
-      # Difficulty - default to EASY (0) if not specified
-    difficulty = song_metadata.get("difficulty", "EASY")
+    
+    # Difficulty - default to MEDIUM (1) if not specified, not EASY
+    difficulty = song_metadata.get("difficulty", "MEDIUM")
     if isinstance(difficulty, str) and difficulty.upper() in DIFFICULTY_MAP:
         validated["difficulty"] = DIFFICULTY_MAP[difficulty.upper()]
     elif isinstance(difficulty, int) and difficulty in [0, 1, 2, 3]:
         validated["difficulty"] = difficulty
     else:
-        logging.warning(f"Invalid difficulty '{difficulty}', defaulting to EASY (0)")
-        validated["difficulty"] = 0
+        logging.warning(f"Invalid difficulty '{difficulty}', defaulting to MEDIUM (1)")
+        validated["difficulty"] = 1  # Default to MEDIUM instead of EASY
     
     # Duration - will be calculated from audio file
     validated["duration"] = song_metadata.get("duration", 0)
@@ -91,8 +92,7 @@ def generate_info_csv(song_metadata, output_path, audio_path=None, notes_csv_pat
         notes_csv_path (str, optional): Path to notes.csv file to analyze difficulty from enemies per second.
         auto_detect_difficulty (bool): Whether to automatically detect difficulty from notes analysis.
     Returns:
-        bool: True if successful, False otherwise.
-    """
+        bool: True if successful, False otherwise.    """
     try:
         if not output_path.lower().endswith('.csv'):
             logging.error("Output path must be a .csv file.")
@@ -100,20 +100,74 @@ def generate_info_csv(song_metadata, output_path, audio_path=None, notes_csv_pat
             
         validated = validate_metadata(song_metadata)
         
+        # Debug: Write to file since logging is broken
+        debug_file = "c:/temp/beatmapper_debug.txt"
+        try:
+            os.makedirs(os.path.dirname(debug_file), exist_ok=True)
+            with open(debug_file, "a") as f:
+                f.write(f"\n=== INFO GENERATOR DEBUG {os.path.basename(output_path)} ===\n")
+                f.write(f"Original metadata: {song_metadata}\n")
+                f.write(f"Validated metadata: {validated}\n")
+                f.write(f"auto_detect_difficulty: {auto_detect_difficulty}\n")
+                f.write(f"notes_csv_path: {notes_csv_path}\n")
+                f.write(f"notes_csv_exists: {os.path.exists(notes_csv_path) if notes_csv_path else False}\n")
+                f.write(f"audio_path: {audio_path}\n")
+                f.write(f"current_difficulty: {song_metadata.get('difficulty')}\n")
+                f.write(f"condition_check: {song_metadata.get('difficulty') in [None, '', 'EASY']}\n")
+        except:
+            pass
+        
         # Get audio duration if audio path is provided
         if audio_path and validated["duration"] == 0:
-            validated["duration"] = get_audio_duration(audio_path)
-        
-        # Auto-detect difficulty from notes.csv if enabled and not already specified
-        if auto_detect_difficulty and notes_csv_path and song_metadata.get("difficulty") in [None, "", "EASY"]:
+            validated["duration"] = get_audio_duration(audio_path)        # Auto-detect difficulty from notes.csv if enabled - always try if auto_detect is True
+        if auto_detect_difficulty and notes_csv_path:
+            try:
+                with open(debug_file, "a") as f:
+                    f.write(f"ATTEMPTING auto-detection from notes.csv\n")
+            except:
+                pass
             detected_difficulty = analyze_notes_difficulty(notes_csv_path)
-            validated["difficulty"] = DIFFICULTY_MAP[detected_difficulty]
-            logging.info(f"Auto-detected difficulty from notes: {detected_difficulty} ({validated['difficulty']})")
-        elif auto_detect_difficulty and audio_path and song_metadata.get("difficulty") in [None, "", "EASY"]:
+            if detected_difficulty and detected_difficulty != "EASY":
+                validated["difficulty"] = DIFFICULTY_MAP[detected_difficulty]
+                try:
+                    with open(debug_file, "a") as f:
+                        f.write(f"Auto-detected from notes: {detected_difficulty} -> {validated['difficulty']}\n")
+                except:
+                    pass
+            elif audio_path:
+                # If notes analysis gave EASY, try audio analysis as fallback
+                try:
+                    with open(debug_file, "a") as f:
+                        f.write(f"Notes gave EASY, trying audio fallback\n")
+                except:
+                    pass
+                detected_difficulty = analyze_audio_difficulty(audio_path)
+                validated["difficulty"] = DIFFICULTY_MAP[detected_difficulty]
+                try:
+                    with open(debug_file, "a") as f:
+                        f.write(f"Audio fallback: {detected_difficulty} -> {validated['difficulty']}\n")
+                except:
+                    pass
+        elif auto_detect_difficulty and audio_path:
             # Fallback to audio analysis if notes.csv not available
+            try:
+                with open(debug_file, "a") as f:
+                    f.write(f"ATTEMPTING auto-detection from audio\n")
+            except:
+                pass
             detected_difficulty = analyze_audio_difficulty(audio_path)
             validated["difficulty"] = DIFFICULTY_MAP[detected_difficulty]
-            logging.info(f"Auto-detected difficulty from audio: {detected_difficulty} ({validated['difficulty']})")
+            try:
+                with open(debug_file, "a") as f:
+                    f.write(f"Auto-detected from audio: {detected_difficulty} -> {validated['difficulty']}\n")
+            except:
+                pass
+        else:
+            try:
+                with open(debug_file, "a") as f:
+                    f.write(f"SKIPPING auto-detection - no paths provided\n")
+            except:
+                pass
         
         row = [
             validated.get("title", ""),
@@ -214,6 +268,7 @@ def analyze_notes_difficulty(notes_csv_path):
         str: Difficulty level ("EASY", "MEDIUM", "HARD", "EXTREME")
     """
     try:
+        logging.info(f"Analyzing notes difficulty from: {notes_csv_path}")
         if not os.path.exists(notes_csv_path):
             logging.warning(f"Notes CSV file not found for analysis: {notes_csv_path}")
             return "EASY"
@@ -224,6 +279,8 @@ def analyze_notes_difficulty(notes_csv_path):
         enemies = []
         with open(notes_csv_path, 'r') as f:
             reader = csv.DictReader(f)
+            headers = reader.fieldnames
+            logging.info(f"Notes CSV headers: {headers}")
             for row in reader:
                 try:
                     time = float(row['Time [s]'])
@@ -233,6 +290,7 @@ def analyze_notes_difficulty(notes_csv_path):
                     logging.warning(f"Invalid row in notes.csv: {row} - {e}")
                     continue
         
+        logging.info(f"Found {len(enemies)} enemies in notes.csv")
         if not enemies:
             logging.warning("No valid enemies found in notes.csv, defaulting to EASY")
             return "EASY"
