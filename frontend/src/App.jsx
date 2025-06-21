@@ -11,17 +11,26 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
     title: beatmap?.title || "",
     artist: beatmap?.artist || "",
     song_map: beatmap?.song_map || "VULCAN",
+    difficulty: beatmap?.difficulty ? (() => {
+      // Convert numeric difficulty back to string for dropdown
+      const difficultyMap = { "0": "EASY", "1": "MEDIUM", "2": "HARD", "3": "EXTREME" };
+      return difficultyMap[beatmap.difficulty] || "AUTO";
+    })() : "AUTO",
   });
   
   const [albumArt, setAlbumArt] = useState(null);
   const [albumArtPreview, setAlbumArtPreview] = useState(beatmap?.artwork || null);
   const [isSaving, setIsSaving] = useState(false);
     // Reset form when beatmap changes
-  useEffect(() => {
-    if (beatmap) {      setMetadata({
+  useEffect(() => {    if (beatmap) {      setMetadata({
         title: beatmap.title || "",
         artist: beatmap.artist || "",
         song_map: beatmap.song_map || "VULCAN",
+        difficulty: beatmap.difficulty ? (() => {
+          // Convert numeric difficulty back to string for dropdown
+          const difficultyMap = { "0": "EASY", "1": "MEDIUM", "2": "HARD", "3": "EXTREME" };
+          return difficultyMap[beatmap.difficulty] || "AUTO";
+        })() : "AUTO",
       });
       setAlbumArtPreview(beatmap.artwork || null);
     }
@@ -61,7 +70,8 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
         },        body: JSON.stringify({
           title: metadata.title || "",
           artist: metadata.artist || "",
-          difficulty: metadata.difficulty || "EASY", // Preserve current difficulty
+          // Only send difficulty if user explicitly selected one (not AUTO)
+          ...(metadata.difficulty !== "AUTO" && { difficulty: metadata.difficulty }),
           song_map: metadata.song_map || "VULCAN"
         })
       });
@@ -73,11 +83,13 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
       }
       
       const result = await response.json();
-      
-      if (result.status === "success") {
+        if (result.status === "success") {
         const updatedBeatmap = {
           ...beatmap,
-          ...metadata,
+          title: result.title,
+          artist: result.artist,
+          difficulty: result.difficulty, // Use numeric difficulty from backend response
+          song_map: result.song_map,
           artwork: albumArtPreview || beatmap.artwork
         };
         
@@ -260,6 +272,106 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
               color: "white",
             }}
           />        </div>
+          <div style={{ marginBottom: "16px", textAlign: "left" }}>
+          <div style={{ marginBottom: "12px" }}>
+            Difficulty Override 
+            <span style={{ color: "#999", fontSize: "12px", marginLeft: "8px" }}>
+              (Optional - click "Auto-Detect" to use detected value)
+            </span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={() => handleInputChange({ target: { name: "difficulty", value: "AUTO" } })}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "6px",
+                border: "2px solid",
+                cursor: "pointer",
+                fontWeight: "bold",
+                fontSize: "14px",
+                backgroundColor: (metadata.difficulty || "AUTO") === "AUTO" ? "#6b7280" : "transparent",
+                borderColor: (metadata.difficulty || "AUTO") === "AUTO" ? "#6b7280" : "#4b5563",
+                color: (metadata.difficulty || "AUTO") === "AUTO" ? "white" : "#9ca3af",
+                transition: "all 0.2s ease",
+              }}
+            >
+              Auto-Detect
+            </button>
+            <button
+              type="button"
+              onClick={() => handleInputChange({ target: { name: "difficulty", value: "EASY" } })}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "6px",
+                border: "2px solid",
+                cursor: "pointer",
+                fontWeight: "bold",
+                fontSize: "14px",
+                backgroundColor: metadata.difficulty === "EASY" ? "#22c55e" : "transparent",
+                borderColor: metadata.difficulty === "EASY" ? "#22c55e" : "#16a34a",
+                color: metadata.difficulty === "EASY" ? "white" : "#22c55e",
+                transition: "all 0.2s ease",
+              }}
+            >
+              EASY
+            </button>
+            <button
+              type="button"
+              onClick={() => handleInputChange({ target: { name: "difficulty", value: "MEDIUM" } })}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "6px",
+                border: "2px solid",
+                cursor: "pointer",
+                fontWeight: "bold",
+                fontSize: "14px",
+                backgroundColor: metadata.difficulty === "MEDIUM" ? "#eab308" : "transparent",
+                borderColor: metadata.difficulty === "MEDIUM" ? "#eab308" : "#ca8a04",
+                color: metadata.difficulty === "MEDIUM" ? "white" : "#eab308",
+                transition: "all 0.2s ease",
+              }}
+            >
+              MEDIUM
+            </button>
+            <button
+              type="button"
+              onClick={() => handleInputChange({ target: { name: "difficulty", value: "HARD" } })}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "6px",
+                border: "2px solid",
+                cursor: "pointer",
+                fontWeight: "bold",
+                fontSize: "14px",
+                backgroundColor: metadata.difficulty === "HARD" ? "#f97316" : "transparent",
+                borderColor: metadata.difficulty === "HARD" ? "#f97316" : "#ea580c",
+                color: metadata.difficulty === "HARD" ? "white" : "#f97316",
+                transition: "all 0.2s ease",
+              }}
+            >
+              HARD
+            </button>
+            <button
+              type="button"
+              onClick={() => handleInputChange({ target: { name: "difficulty", value: "EXTREME" } })}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "6px",
+                border: "2px solid",
+                cursor: "pointer",
+                fontWeight: "bold",
+                fontSize: "14px",
+                backgroundColor: metadata.difficulty === "EXTREME" ? "#ef4444" : "transparent",
+                borderColor: metadata.difficulty === "EXTREME" ? "#ef4444" : "#dc2626",
+                color: metadata.difficulty === "EXTREME" ? "white" : "#ef4444",
+                transition: "all 0.2s ease",
+              }}
+            >
+              EXTREME
+            </button>
+          </div>
+        </div>
         
         <div style={{ marginBottom: "24px", textAlign: "left" }}>
           <div style={{ marginBottom: "8px" }}>Stage Select</div>
@@ -350,7 +462,12 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
   const [editMode, setEditMode] = useState(false);  const [editFields, setEditFields] = useState({
     title: beatmap?.title || "",
     artist: beatmap?.artist || "",
-    song_map: beatmap?.song_map || "VULCAN"
+    song_map: beatmap?.song_map || "VULCAN",
+    difficulty: beatmap?.difficulty ? (() => {
+      // Convert numeric difficulty back to string for dropdown
+      const difficultyMap = { "0": "EASY", "1": "MEDIUM", "2": "HARD", "3": "EXTREME" };
+      return difficultyMap[beatmap.difficulty] || "AUTO";
+    })() : "AUTO",
   });
 
   const [uploadingMetadata, setUploadingMetadata] = useState(false);
@@ -377,7 +494,8 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
           id: beatmap.id,
           title: editFields.title,
           artist: editFields.artist,
-          // Don't send difficulty unless explicitly changed by user
+          // Only send difficulty if user explicitly selected one (not AUTO)
+          ...(editFields.difficulty !== "AUTO" && { difficulty: editFields.difficulty }),
           song_map: editFields.song_map
         })
       });
@@ -389,11 +507,16 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
       }
 
       const result = await response.json();
-      
-      if (result.status === "success") {
-        // Update local state
+        if (result.status === "success") {
+        // Update local state with the response data from backend (which has correct numeric difficulty)
         setBeatmaps(prev => 
-          prev.map(b => b.id === beatmap.id ? { ...b, ...editFields } : b)
+          prev.map(b => b.id === beatmap.id ? { 
+            ...b, 
+            title: result.title,
+            artist: result.artist,
+            difficulty: result.difficulty, // Use numeric difficulty from backend response
+            song_map: result.song_map
+          } : b)
         );
         
         setEditMode(false);
@@ -478,9 +601,7 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
                   value={editFields.artist}
                   onChange={handleChange}
                   className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2"
-                />              </div>
-
-              <div>
+                />              </div>              <div>
                 <label className="block text-sm font-semibold mb-1">Song Map:</label>
                 <select
                   name="song_map"
@@ -491,6 +612,72 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
                   <option value="DESERT">Desert</option>
                   <option value="STORM">Storm</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold mb-2">
+                  Difficulty Override
+                  <span className="text-gray-400 text-xs ml-2">
+                    (Optional - click "Auto-Detect" to use detected value)
+                  </span>
+                </label>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <button
+                    type="button"
+                    onClick={() => setEditFields(prev => ({ ...prev, difficulty: "AUTO" }))}
+                    className={`px-4 py-2 rounded-md border-2 font-bold text-sm transition-all duration-200 ${
+                      editFields.difficulty === "AUTO" 
+                        ? "bg-gray-500 border-gray-500 text-white" 
+                        : "bg-transparent border-gray-600 text-gray-400 hover:border-gray-500"
+                    }`}
+                  >
+                    Auto-Detect
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditFields(prev => ({ ...prev, difficulty: "EASY" }))}
+                    className={`px-4 py-2 rounded-md border-2 font-bold text-sm transition-all duration-200 ${
+                      editFields.difficulty === "EASY" 
+                        ? "bg-green-500 border-green-500 text-white" 
+                        : "bg-transparent border-green-600 text-green-500 hover:border-green-500"
+                    }`}
+                  >
+                    EASY
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditFields(prev => ({ ...prev, difficulty: "MEDIUM" }))}
+                    className={`px-4 py-2 rounded-md border-2 font-bold text-sm transition-all duration-200 ${
+                      editFields.difficulty === "MEDIUM" 
+                        ? "bg-yellow-500 border-yellow-500 text-white" 
+                        : "bg-transparent border-yellow-600 text-yellow-500 hover:border-yellow-500"
+                    }`}
+                  >
+                    MEDIUM
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditFields(prev => ({ ...prev, difficulty: "HARD" }))}
+                    className={`px-4 py-2 rounded-md border-2 font-bold text-sm transition-all duration-200 ${
+                      editFields.difficulty === "HARD" 
+                        ? "bg-orange-500 border-orange-500 text-white" 
+                        : "bg-transparent border-orange-600 text-orange-500 hover:border-orange-500"
+                    }`}
+                  >
+                    HARD
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditFields(prev => ({ ...prev, difficulty: "EXTREME" }))}
+                    className={`px-4 py-2 rounded-md border-2 font-bold text-sm transition-all duration-200 ${
+                      editFields.difficulty === "EXTREME" 
+                        ? "bg-red-500 border-red-500 text-white" 
+                        : "bg-transparent border-red-600 text-red-500 hover:border-red-500"
+                    }`}
+                  >
+                    EXTREME
+                  </button>
+                </div>
               </div>
 
               <div className="flex justify-end space-x-2 mt-4">

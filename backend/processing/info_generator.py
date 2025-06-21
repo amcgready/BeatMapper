@@ -12,7 +12,12 @@ DIFFICULTY_MAP = {
     "EASY": 0,
     "MEDIUM": 1, 
     "HARD": 2,
-    "EXTREME": 3
+    "EXTREME": 3,
+    # Also handle numeric strings for robustness
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3
 }
 
 # Difficulty thresholds (enemies per second)
@@ -26,8 +31,11 @@ DIFFICULTY_THRESHOLDS = {
 # Song map mapping
 SONG_MAP_MAP = {
     "VULCAN": 0,
-    "DESERT": 1,
-    "STORM": 2
+    "DESERT": 1,    "STORM": 2,
+    # Also handle numeric strings for robustness
+    "0": 0,
+    "1": 1,
+    "2": 2
 }
 
 def get_audio_duration(audio_path):

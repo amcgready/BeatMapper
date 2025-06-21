@@ -93,7 +93,7 @@ def extract_midi_beats(midi_path):
         logger.error(f"Error processing MIDI file: {e}")
         return []
 
-def generate_notes_csv(song_path, midi_path, output_path):
+def generate_notes_csv(song_path, midi_path, output_path, target_difficulty=None):
     """
     Generate notes based on audio analysis and beat detection.
     This is the standard generator that balances accuracy and performance.
@@ -101,13 +101,56 @@ def generate_notes_csv(song_path, midi_path, output_path):
     Args:
         song_path: Path to the audio file
         midi_path: Optional path to a MIDI file for enhanced beat detection
-        output_path: Path where the notes.csv will be saved
+        output_path: Path where the notes.csv will be saved        target_difficulty: Optional target difficulty level ("EASY", "MEDIUM", "HARD", "EXTREME")
+                          If provided, note density will be adjusted to match this difficulty
         
     Returns:
         bool: True if successful, False otherwise
     """
     try:
-        logger.info(f"Generating standard drum notes for {os.path.basename(song_path)}")
+        logger.info(f"Generating standard drum notes for {os.path.basename(song_path)}")        # Debug logging for target difficulty
+        debug_file = "c:/temp/beatmapper_debug.txt"
+        try:
+            os.makedirs(os.path.dirname(debug_file), exist_ok=True)
+            with open(debug_file, "w") as f:  # Clear the file
+                f.write(f"=== NOTES GENERATOR DEBUG ===\n")
+                f.write(f"Song: {os.path.basename(song_path)}\n")
+                f.write(f"Target difficulty received: {target_difficulty}\n")
+                f.write(f"Type of target_difficulty: {type(target_difficulty)}\n")
+        except:
+            pass
+          # Use adaptive difficulty system if target difficulty is specified
+        if target_difficulty:
+            try:
+                from .adaptive_notes_simple import generate_adaptive_notes_csv
+                
+                # Debug logging
+                try:
+                    with open(debug_file, "a") as f:
+                        f.write(f"Using simplified adaptive notes system for: {target_difficulty}\n")
+                except:
+                    pass
+                
+                # Use the adaptive system
+                success = generate_adaptive_notes_csv(song_path, midi_path, output_path, target_difficulty)
+                
+                if success:
+                    logger.info(f"Successfully generated notes using simplified adaptive system for {target_difficulty}")
+                    # Debug logging
+                    try:
+                        with open(debug_file, "a") as f:
+                            f.write(f"Simplified adaptive system completed successfully\n")
+                    except:
+                        pass
+                    return True
+                else:
+                    logger.warning("Simplified adaptive system failed, falling back to original system")
+                    
+            except ImportError as e:
+                logger.warning(f"Simplified adaptive system not available: {e}")
+            except Exception as e:
+                logger.error(f"Error in simplified adaptive system: {e}")
+                # Fall through to original system
         
         # Check if MIDI file is provided for enhanced detection
         midi_beats = None
@@ -156,8 +199,7 @@ def generate_notes_csv(song_path, midi_path, output_path):
                     (300, 1000),  # Snare/mid toms
                     (1000, 4000), # Hi-hats/cymbals
                     (4000, 8000), # Rides/crashes
-                ]
-                  # Generate notes based on detected beats and audio analysis
+                ]                # Generate notes based on detected beats and audio analysis
                 # Use MIDI beats if available, otherwise use librosa beats
                 if midi_beats and len(midi_beats) > 0:
                     logger.info("Using MIDI beats for enhanced accuracy")
@@ -165,13 +207,13 @@ def generate_notes_csv(song_path, midi_path, output_path):
                     midi_beat_frames = librosa.time_to_frames(midi_beats, sr=sr)
                     success = generate_drum_synced_notes(
                         y_for_analysis, sr, song_duration, tempo, midi_beat_frames, 
-                        output_path, optimized_bands, use_midi=True
+                        output_path, optimized_bands, use_midi=True, target_difficulty=target_difficulty
                     )
                 else:
                     logger.info("Using audio-detected beats")
                     success = generate_drum_synced_notes(
                         y_for_analysis, sr, song_duration, tempo, beats, 
-                        output_path, optimized_bands, use_midi=False
+                        output_path, optimized_bands, use_midi=False, target_difficulty=target_difficulty
                     )
                 
                 if success:
@@ -232,13 +274,14 @@ def try_extract_drums_with_spleeter(song_path):
         logger.warning(f"Error using spleeter: {str(e)}")
         return None
 
-def generate_drum_synced_notes(y, sr, song_duration, tempo, beats, output_path, optimized_bands=None, use_midi=False):
+def generate_drum_synced_notes(y, sr, song_duration, tempo, beats, output_path, optimized_bands=None, use_midi=False, target_difficulty=None):
     """
     Generate notes based on detected beats and multi-band analysis.
     This is the main algorithm for the standard generator.
     
     Args:
         use_midi: Whether the beats come from MIDI (True) or audio analysis (False)
+        target_difficulty: Target difficulty level to adjust note density
     """
     try:
         import librosa
@@ -255,15 +298,66 @@ def generate_drum_synced_notes(y, sr, song_duration, tempo, beats, output_path, 
         
         # Get seconds per beat
         spb = 60 / tempo
+          # Detect onsets with multiple band approach
+        onsets_by_band = multi_band_onset_detection(y, sr, optimized_bands, base_threshold=threshold)
         
-        # Detect onsets with multiple band approach
-        onsets_by_band = multi_band_onset_detection(y, sr, optimized_bands)
+        # Calculate adaptive spacing between notes based on tempo        
+        min_spacing = calculate_adaptive_beat_spacing(tempo)
         
+        # Apply original difficulty-based adjustments as fallback
+        if target_difficulty:
+            # Debug logging setup
+            debug_file = "c:/temp/beatmapper_debug.txt"
+            try:
+                os.makedirs(os.path.dirname(debug_file), exist_ok=True)
+                with open(debug_file, "a") as f:
+                    f.write(f"Using original difficulty system for: {target_difficulty}\n")
+            except:
+                pass
+                
+            difficulty_multipliers = {
+                "EASY": 8.0,      # 8x spacing = 1/8th the notes  
+                "MEDIUM": 1.4,    # 40% more spacing
+                "HARD": 0.8,      # 20% less spacing = more notes
+                "EXTREME": 0.5    # Half spacing = double the notes
+            }
+            
+            multiplier = difficulty_multipliers.get(target_difficulty, 1.0)
+            original_spacing = min_spacing
+            min_spacing *= multiplier
+            
+            # Debug logging
+            try:
+                with open(debug_file, "a") as f:
+                    f.write(f"Original system - Spacing: {original_spacing:.3f} -> {min_spacing:.3f} (multiplier: {multiplier})\n")
+            except:
+                pass            
+            logger.info(f"Using original difficulty system: {target_difficulty} (spacing multiplier: {multiplier})")
+
         # Calculate adaptive thresholds based on audio characteristics
         threshold = calculate_adaptive_threshold(y, sr, tempo)
         
-        # Calculate adaptive spacing between notes based on tempo
-        min_spacing = calculate_adaptive_beat_spacing(tempo)
+        # Apply difficulty-based threshold adjustments
+        if target_difficulty:
+            threshold_adjustments = {
+                "EASY": 5.0,      # Much higher threshold = far fewer notes
+                "MEDIUM": 1.2,    # Slightly higher threshold
+                "HARD": 0.8,      # Lower threshold = more notes  
+                "EXTREME": 0.6    # Much lower threshold = many notes
+            }
+            
+            threshold_multiplier = threshold_adjustments.get(target_difficulty, 1.0)
+            original_threshold = threshold
+            threshold *= threshold_multiplier
+            
+            # Debug logging
+            try:
+                with open(debug_file, "a") as f:
+                    f.write(f"Threshold: {original_threshold:.3f} -> {threshold:.3f} (multiplier: {threshold_multiplier})\n")
+            except:
+                pass
+            
+            logger.info(f"Adjusted threshold for {target_difficulty}: {threshold:.3f}")
         
         # Prepare to write CSV
         with open(output_path, 'w', newline='') as f:
@@ -348,10 +442,13 @@ def generate_drum_synced_notes(y, sr, song_duration, tempo, beats, output_path, 
         logger.error(f"Error in drum-synced note generation: {str(e)}")
         return False
 
-def multi_band_onset_detection(y, sr, bands=None):
+def multi_band_onset_detection(y, sr, bands=None, base_threshold=0.3):
     """
     Detect onsets in multiple frequency bands for more accurate drum hit detection.
     Returns a list of onset times for each frequency band.
+    
+    Args:
+        base_threshold: Base threshold for onset detection (can be adjusted by difficulty)
     """
     try:
         import librosa
@@ -374,17 +471,16 @@ def multi_band_onset_detection(y, sr, bands=None):
             
             # Compute onset envelope for this band
             onset_env = librosa.onset.onset_strength(y=y_band, sr=sr)
-            
-            # Adaptive threshold based on the band
+              # Adaptive threshold based on the band and base threshold
             # Lower bands (kick, bass) need higher thresholds
             if low_freq < 150:
-                threshold = 0.4
+                threshold = base_threshold * 1.33  # 0.4 default
             elif low_freq < 300:
-                threshold = 0.35
+                threshold = base_threshold * 1.17  # 0.35 default
             elif low_freq < 1000:
-                threshold = 0.3
+                threshold = base_threshold * 1.0   # 0.3 default
             else:
-                threshold = 0.25
+                threshold = base_threshold * 0.83  # 0.25 default
             
             # Detect onsets
             onset_frames = librosa.onset.onset_detect(

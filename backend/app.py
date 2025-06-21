@@ -197,16 +197,16 @@ def upload_file():
             else:
                 logger.info("Empty MIDI file received, skipping")
         else:
-            logger.info("No MIDI file provided")
-
-        # Extract metadata from the form
+            logger.info("No MIDI file provided")        # Extract metadata from the form
         title = request.form.get('title', '')
         artist = request.form.get('artist', '')
+        difficulty = request.form.get('difficulty', '')  # User's difficulty override
+        song_map = request.form.get('song_map', 'VULCAN')  # User's stage selection
         
         # Parse and clean up title/artist metadata in case they're combined
         parsed_title, parsed_artist = parse_artist_title_metadata(title, artist)
         
-        logger.info(f"Original metadata: title='{title}', artist='{artist}'")
+        logger.info(f"Original metadata: title='{title}', artist='{artist}', difficulty='{difficulty}', song_map='{song_map}'")
         logger.info(f"Parsed metadata: title='{parsed_title}', artist='{parsed_artist}'")
         
         # Use parsed values
@@ -246,35 +246,55 @@ def upload_file():
             logger.info(f"Preview generated: {os.path.getsize(preview_path)} bytes")
         except Exception as e:
             logger.error(f"Failed to generate preview: {e}", exc_info=True)
-            return jsonify({"status": "error", "error": f"Failed to generate preview: {str(e)}"}), 500
-          # Generate notes.csv using original audio file
+            return jsonify({"status": "error", "error": f"Failed to generate preview: {str(e)}"}), 500          # Generate notes.csv using original audio file
         notes_path = os.path.join(beatmap_dir, 'notes.csv')
+          # Determine target difficulty for note generation
+        target_difficulty = difficulty if (difficulty and difficulty != "AUTO") else None
+        
+        # Convert numeric difficulty to string if needed for notes generator
+        if target_difficulty is not None:
+            difficulty_string_map = {0: "EASY", 1: "MEDIUM", 2: "HARD", 3: "EXTREME"}
+            if isinstance(target_difficulty, int):
+                target_difficulty = difficulty_string_map.get(target_difficulty, "EASY")
+            elif isinstance(target_difficulty, str) and target_difficulty.isdigit():
+                target_difficulty = difficulty_string_map.get(int(target_difficulty), "EASY")
+        
         try:
             logger.info(f"Generating notes.csv: {notes_path}")
             if midi_path:
                 logger.info(f"Using MIDI file for enhanced beat detection: {midi_path}")
-            generate_notes_csv(audio_path, midi_path, notes_path)  # Pass MIDI path as template_path
+            if target_difficulty:
+                logger.info(f"Using difficulty override for note generation: {target_difficulty}")
+            
+            generate_notes_csv(audio_path, midi_path, notes_path, target_difficulty=target_difficulty)
             logger.info(f"Notes CSV generated: {os.path.getsize(notes_path)} bytes")
         except Exception as e:
             logger.error(f"Failed to generate notes.csv: {e}", exc_info=True)
-            return jsonify({"status": "error", "error": f"Failed to generate notes.csv: {str(e)}"}), 500
-          # Generate info.csv with metadata
+            return jsonify({"status": "error", "error": f"Failed to generate notes.csv: {str(e)}"}), 500          # Generate info.csv with metadata
         info_path = os.path.join(beatmap_dir, 'info.csv')
+        
+        # Determine if user provided an explicit difficulty override
+        user_difficulty_override = difficulty and difficulty != "AUTO"
+        
         song_metadata = {
-            "title": title or os.path.splitext(file.filename)[0],            "artist": artist or "Unknown Artist",
-            "difficulty": "EASY",  # Default difficulty
-            "song_map": "VULCAN"   # Default song map
+            "title": title or os.path.splitext(file.filename)[0],            
+            "artist": artist or "Unknown Artist",
+            "difficulty": difficulty if user_difficulty_override else "EASY",  # Use override or default
+            "song_map": song_map   # Use user's stage selection
         }
         
         try:
             logger.info(f"Generating info.csv: {info_path}")
-            generate_info_csv(song_metadata, info_path, ogg_path, notes_path, auto_detect_difficulty=True)  # Pass audio path and notes path for difficulty detection
+            # Only auto-detect difficulty if user didn't provide an override
+            auto_detect = not user_difficulty_override
+            logger.info(f"User difficulty override: {user_difficulty_override}, auto-detect: {auto_detect}")
+            
+            generate_info_csv(song_metadata, info_path, ogg_path, notes_path, auto_detect_difficulty=auto_detect)# Pass audio path and notes path for difficulty detection
             logger.info(f"Info CSV generated: {os.path.getsize(info_path)} bytes")
         except Exception as e:
             logger.error(f"Failed to generate info.csv: {e}", exc_info=True)
             return jsonify({"status": "error", "error": f"Failed to generate info.csv: {str(e)}"}), 500
-        
-        # Read back the generated info.csv to get the actual detected difficulty and song_map
+          # Read back the generated info.csv to get the actual detected difficulty and song_map
         try:
             # Debug logging
             debug_file = "c:/temp/beatmapper_debug.txt"
@@ -289,8 +309,9 @@ def upload_file():
                 reader = csv.DictReader(f)
                 for row in reader:
                     old_difficulty = song_metadata["difficulty"]
-                    song_metadata["difficulty"] = str(row['Difficulty'])  # Convert to string for beatmaps.json
-                    song_metadata["song_map"] = str(row['Song Map'])      # Convert to string for beatmaps.json
+                    # Store numeric values for consistency
+                    song_metadata["difficulty"] = int(row['Difficulty'])  # Keep as numeric
+                    song_metadata["song_map"] = int(row['Song Map'])       # Keep as numeric
                     
                     # Debug logging
                     try:
@@ -302,15 +323,16 @@ def upload_file():
                     break  # Only need the first (and only) row
         except Exception as e:
             logger.warning(f"Could not read back generated info.csv: {e}")
-            # Keep the original metadata if reading fails
-          # Add to beatmaps.json
+            # Keep the original metadata if reading fails        # Add to beatmaps.json
         beatmaps_path = os.path.join(OUTPUT_DIR, 'beatmaps.json')
+        
         beatmap = {
             "id": beatmap_id,
             "title": song_metadata["title"],
             "artist": song_metadata["artist"],
-            "difficulty": song_metadata["difficulty"],
-            "song_map": song_metadata["song_map"],
+            # song_metadata now contains numeric values after readback from info.csv
+            "difficulty": song_metadata["difficulty"] if isinstance(song_metadata["difficulty"], int) else DIFFICULTY_MAP.get(song_metadata["difficulty"].upper(), 0),
+            "song_map": song_metadata["song_map"] if isinstance(song_metadata["song_map"], int) else SONG_MAP_MAP.get(song_metadata["song_map"].upper(), 0),
             "createdAt": datetime.now().isoformat()
         }
         
@@ -341,8 +363,7 @@ def upload_file():
         except Exception as e:
             logger.error(f"Failed to update beatmaps.json: {e}", exc_info=True)
             # Continue anyway since the beatmap files are created
-              # Clean up temp directory
-        try:
+              # Clean up temp directory        try:
             logger.info(f"Cleaning up temp directory: {temp_dir}")
             shutil.rmtree(temp_dir)
             logger.info(f"Temp directory removed")
@@ -355,8 +376,9 @@ def upload_file():
             "id": beatmap_id,
             "title": song_metadata["title"],
             "artist": song_metadata["artist"],
-            "difficulty": song_metadata["difficulty"],
-            "song_map": song_metadata["song_map"]
+            # song_metadata now contains numeric values after readback from info.csv
+            "difficulty": song_metadata["difficulty"] if isinstance(song_metadata["difficulty"], int) else DIFFICULTY_MAP.get(song_metadata["difficulty"].upper(), 0),
+            "song_map": song_metadata["song_map"] if isinstance(song_metadata["song_map"], int) else SONG_MAP_MAP.get(song_metadata["song_map"].upper(), 0)
         })
                 
     except Exception as e:
@@ -728,14 +750,15 @@ def update_beatmap(beatmap_id):
     try:
         logger.info(f"Update requested for beatmap: {beatmap_id}")
         logger.info(f"Request data: {request.json}")
-        
-        # Debug: Write to file since logging might not be visible
+          # Debug: Write to file since logging might not be visible
         debug_file = "c:/temp/beatmapper_debug.txt"
         try:
             os.makedirs(os.path.dirname(debug_file), exist_ok=True)
             with open(debug_file, "a") as f:
                 f.write(f"\n=== UPDATE ENDPOINT DEBUG {beatmap_id} ===\n")
-                f.write(f"Request data: {request.json}\n")
+                f.write(f"Raw request data: {request.json}\n")
+                f.write(f"data.get('difficulty'): {data.get('difficulty')}\n")
+                f.write(f"data.get('difficulty') is not None: {data.get('difficulty') is not None}\n")
         except:
             pass
         
@@ -764,6 +787,12 @@ def update_beatmap(beatmap_id):
             
         # If difficulty is not provided, read the current difficulty from info.csv to preserve it
         if difficulty is None:
+            try:
+                with open(debug_file, "a") as f:
+                    f.write(f"No difficulty provided, preserving existing\n")
+            except:
+                pass
+                
             info_path = os.path.join(beatmap_dir, 'info.csv')
             if os.path.exists(info_path):
                 try:
@@ -788,10 +817,10 @@ def update_beatmap(beatmap_id):
             else:
                 difficulty = 'EASY'  # Fallback if no info.csv exists
         else:
-            # Debug logging
+            # Debug logging  
             try:
                 with open(debug_file, "a") as f:
-                    f.write(f"Using provided difficulty: {difficulty}\n")
+                    f.write(f"Using provided difficulty override: {difficulty}\n")
             except:
                 pass
         
@@ -847,16 +876,17 @@ def update_beatmap(beatmap_id):
                     with open(beatmaps_path, 'r') as f:
                         beatmaps = json.load(f)
                 except json.JSONDecodeError:
-                    logger.warning("Could not parse beatmaps.json, starting with empty list")
-              # Find and update the specified beatmap
+                    logger.warning("Could not parse beatmaps.json, starting with empty list")              # Find and update the specified beatmap
             updated = False
             for i, beatmap in enumerate(beatmaps):
                 if beatmap.get('id') == beatmap_id:
                     # Update fields
                     beatmaps[i]['title'] = title
                     beatmaps[i]['artist'] = artist
-                    beatmaps[i]['difficulty'] = difficulty
-                    beatmaps[i]['song_map'] = song_map
+                    # Convert difficulty string to numeric for frontend compatibility
+                    beatmaps[i]['difficulty'] = DIFFICULTY_MAP.get(difficulty.upper(), 0) if isinstance(difficulty, str) else difficulty
+                    # Convert song_map string to numeric for frontend compatibility
+                    beatmaps[i]['song_map'] = SONG_MAP_MAP.get(song_map.upper(), 0) if isinstance(song_map, str) else song_map
                     beatmaps[i]['updatedAt'] = datetime.now().isoformat()
                     updated = True
                     break
@@ -868,25 +898,133 @@ def update_beatmap(beatmap_id):
                     "id": beatmap_id,
                     "title": title,
                     "artist": artist,
-                    "difficulty": difficulty,
-                    "song_map": song_map,
+                    # Convert difficulty string to numeric for frontend compatibility
+                    "difficulty": DIFFICULTY_MAP.get(difficulty.upper(), 0) if isinstance(difficulty, str) else difficulty,
+                    # Convert song_map string to numeric for frontend compatibility
+                    "song_map": SONG_MAP_MAP.get(song_map.upper(), 0) if isinstance(song_map, str) else song_map,
                     "createdAt": datetime.now().isoformat(),
                     "updatedAt": datetime.now().isoformat()
                 })
-            
-            # Save updated beatmaps data
+              # Save updated beatmaps data
             with open(beatmaps_path, 'w') as f:
                 json.dump(beatmaps, f)
                 
             logger.info(f"Successfully updated beatmap in beatmaps.json")
-              # Return the updated beatmap data
+              # Check if we need to regenerate notes.csv (if difficulty changed)
+            should_regenerate_notes = False
+            regeneration_reason = ""
+            
+            # Case 1: User explicitly provided a difficulty
+            if data.get('difficulty') is not None:
+                should_regenerate_notes = True
+                regeneration_reason = f"User provided explicit difficulty: {difficulty}"
+            
+            # Case 2: Check if the computed difficulty differs from current info.csv
+            try:
+                current_info_difficulty = None
+                with open(info_path, 'r') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        current_info_difficulty = int(row['Difficulty'])
+                        break
+                
+                computed_difficulty_numeric = DIFFICULTY_MAP.get(difficulty.upper(), 0) if isinstance(difficulty, str) else difficulty
+                
+                if current_info_difficulty is not None and current_info_difficulty != computed_difficulty_numeric:
+                    should_regenerate_notes = True
+                    regeneration_reason = f"Difficulty changed from {current_info_difficulty} to {computed_difficulty_numeric}"
+                    
+                # Debug logging
+                try:
+                    with open(debug_file, "a") as f:
+                        f.write(f"Current info.csv difficulty: {current_info_difficulty}\n")
+                        f.write(f"Computed difficulty: {computed_difficulty_numeric}\n")
+                        f.write(f"Should regenerate: {should_regenerate_notes}\n")
+                        f.write(f"Reason: {regeneration_reason}\n")
+                except:
+                    pass
+                    
+            except Exception as e:
+                logger.warning(f"Could not read current info.csv for comparison: {e}")
+                # If we can't read the current difficulty, regenerate to be safe
+                if data.get('difficulty') is not None:
+                    should_regenerate_notes = True
+                    regeneration_reason = "Could not read current difficulty, regenerating to be safe"
+              # Regenerate notes.csv if needed
+            if should_regenerate_notes:
+                try:
+                    logger.info(f"Regenerating notes.csv: {regeneration_reason}")
+                    
+                    # Debug logging
+                    try:
+                        with open(debug_file, "a") as f:
+                            f.write(f"REGENERATING notes.csv: {regeneration_reason}\n")
+                            f.write(f"Target difficulty: {difficulty}\n")
+                    except:
+                        pass
+                    
+                    # Find the audio file in the beatmap directory
+                    audio_file = None
+                    midi_file = None
+                    
+                    for filename in os.listdir(beatmap_dir):
+                        if filename.lower().endswith(('.mp3', '.wav', '.flac', '.ogg')):
+                            audio_file = os.path.join(beatmap_dir, filename)
+                        elif filename.lower().endswith(('.mid', '.midi')):
+                            midi_file = os.path.join(beatmap_dir, filename)
+                    
+                    if audio_file and os.path.exists(audio_file):
+                        notes_path = os.path.join(beatmap_dir, 'notes.csv')
+                        
+                        # Import the notes generator
+                        from processing.notes_generator import generate_notes_csv
+                          # Convert numeric difficulty back to string for notes generator
+                        difficulty_string_map = {0: "EASY", 1: "MEDIUM", 2: "HARD", 3: "EXTREME"}
+                        target_difficulty_string = difficulty_string_map.get(difficulty, "EASY") if isinstance(difficulty, int) else difficulty
+                        
+                        # Debug logging
+                        try:
+                            with open(debug_file, "a") as f:
+                                f.write(f"Converting difficulty {difficulty} to {target_difficulty_string}\n")
+                        except:
+                            pass
+                        
+                        # Regenerate notes.csv with the new difficulty
+                        generate_notes_csv(
+                            song_path=audio_file,
+                            midi_path=midi_file if midi_file and os.path.exists(midi_file) else None,
+                            output_path=notes_path,
+                            target_difficulty=target_difficulty_string
+                        )
+                        
+                        logger.info(f"Successfully regenerated notes.csv with difficulty: {difficulty}")
+                          # Debug logging
+                        try:
+                            with open(debug_file, "a") as f:
+                                f.write(f"Notes.csv regenerated successfully\n")
+                        except:
+                            pass
+                    else:
+                        logger.warning(f"Could not find audio file in {beatmap_dir} for notes regeneration")
+                        
+                except Exception as e:
+                    logger.error(f"Failed to regenerate notes.csv: {e}", exc_info=True)
+                    # Don't fail the entire update if notes regeneration fails
+                    try:
+                        with open(debug_file, "a") as f:
+                            f.write(f"Notes regeneration failed: {e}\n")
+                    except:
+                        pass
+              
+            # Return the updated beatmap data
             return jsonify({
                 "status": "success",
                 "id": beatmap_id,
                 "title": title,
                 "artist": artist,
-                "difficulty": difficulty,
-                "song_map": song_map
+                # Return numeric difficulty and song_map for frontend compatibility
+                "difficulty": DIFFICULTY_MAP.get(difficulty.upper(), 0) if isinstance(difficulty, str) else difficulty,
+                "song_map": SONG_MAP_MAP.get(song_map.upper(), 0) if isinstance(song_map, str) else song_map
             })
             
         except Exception as e:
