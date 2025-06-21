@@ -377,7 +377,7 @@ function BeatmapDetails({ beatmaps, setBeatmaps, onDelete }) {
           id: beatmap.id,
           title: editFields.title,
           artist: editFields.artist,
-          difficulty: editFields.difficulty || beatmap.difficulty || "EASY", // Preserve current difficulty
+          // Don't send difficulty unless explicitly changed by user
           song_map: editFields.song_map
         })
       });

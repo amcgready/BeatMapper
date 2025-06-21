@@ -276,11 +276,29 @@ def upload_file():
         
         # Read back the generated info.csv to get the actual detected difficulty and song_map
         try:
+            # Debug logging
+            debug_file = "c:/temp/beatmapper_debug.txt"
+            try:
+                with open(debug_file, "a") as f:
+                    f.write(f"\n=== UPLOAD READBACK DEBUG {beatmap_id} ===\n")
+                    f.write(f"About to read info.csv from: {info_path}\n")
+            except:
+                pass
+                
             with open(info_path, 'r') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
+                    old_difficulty = song_metadata["difficulty"]
                     song_metadata["difficulty"] = str(row['Difficulty'])  # Convert to string for beatmaps.json
                     song_metadata["song_map"] = str(row['Song Map'])      # Convert to string for beatmaps.json
+                    
+                    # Debug logging
+                    try:
+                        with open(debug_file, "a") as f:
+                            f.write(f"Read from info.csv - Difficulty: {row['Difficulty']}\n")
+                            f.write(f"song_metadata difficulty changed: {old_difficulty} -> {song_metadata['difficulty']}\n")
+                    except:
+                        pass
                     break  # Only need the first (and only) row
         except Exception as e:
             logger.warning(f"Could not read back generated info.csv: {e}")
@@ -296,6 +314,13 @@ def upload_file():
             "createdAt": datetime.now().isoformat()
         }
         
+        # Debug logging for beatmap object
+        try:
+            with open(debug_file, "a") as f:
+                f.write(f"Created beatmap object: {beatmap}\n")
+        except:
+            pass
+
         # Add to beatmaps.json
         try:
             logger.info(f"Updating beatmaps.json: {beatmaps_path}")
@@ -704,6 +729,16 @@ def update_beatmap(beatmap_id):
         logger.info(f"Update requested for beatmap: {beatmap_id}")
         logger.info(f"Request data: {request.json}")
         
+        # Debug: Write to file since logging might not be visible
+        debug_file = "c:/temp/beatmapper_debug.txt"
+        try:
+            os.makedirs(os.path.dirname(debug_file), exist_ok=True)
+            with open(debug_file, "a") as f:
+                f.write(f"\n=== UPDATE ENDPOINT DEBUG {beatmap_id} ===\n")
+                f.write(f"Request data: {request.json}\n")
+        except:
+            pass
+        
         # Get updated metadata from request
         data = request.json
         
@@ -740,11 +775,27 @@ def update_beatmap(beatmap_id):
                             difficulty_names = ['EASY', 'MEDIUM', 'HARD', 'EXTREME']
                             difficulty = difficulty_names[current_difficulty] if 0 <= current_difficulty < 4 else 'EASY'
                             break
+                    
+                    # Debug logging
+                    try:
+                        with open(debug_file, "a") as f:
+                            f.write(f"Preserved difficulty from info.csv: {current_difficulty} -> {difficulty}\n")
+                    except:
+                        pass
                 except Exception as e:
                     logger.warning(f"Could not read current difficulty from info.csv: {e}")
                     difficulty = 'EASY'  # Fallback
             else:
-                difficulty = 'EASY'  # Fallback if no info.csv exists        # Update info.csv
+                difficulty = 'EASY'  # Fallback if no info.csv exists
+        else:
+            # Debug logging
+            try:
+                with open(debug_file, "a") as f:
+                    f.write(f"Using provided difficulty: {difficulty}\n")
+            except:
+                pass
+        
+        # Update info.csv
         info_path = os.path.join(beatmap_dir, 'info.csv')
         try:
             logger.info(f"Updating info.csv: {info_path}")
@@ -762,11 +813,10 @@ def update_beatmap(beatmap_id):
             current_data['Song Name'] = title
             current_data['Author Name'] = artist
             current_data['Song Map'] = str(SONG_MAP_MAP.get(song_map.upper(), 0) if isinstance(song_map, str) else song_map)
-            
-            # Only update difficulty if it was explicitly provided (not defaulted)
-            if difficulty and difficulty != 'EASY' or data.get('difficulty') is not None:
+              # Only update difficulty if it was explicitly provided in the request
+            if data.get('difficulty') is not None:
                 current_data['Difficulty'] = str(DIFFICULTY_MAP.get(difficulty.upper(), 0) if isinstance(difficulty, str) else difficulty)
-            # Otherwise, keep the existing difficulty value
+            # Otherwise, keep the existing difficulty value from current_data (no change needed)
             
             # Write the updated info.csv
             with open(info_path, 'w', newline='', encoding='utf-8') as csvfile:
