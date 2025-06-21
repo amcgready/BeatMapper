@@ -29,11 +29,20 @@ def generate_adaptive_notes_csv(song_path, midi_path, output_path, target_diffic
         y, sr = librosa.load(song_path, sr=None)
         duration = len(y) / sr
         
-        # Calculate target number of notes
-        target_note_count = int(duration * target_density)
+        # Calculate target number of notes        target_note_count = int(duration * target_density)
         
         logger.info(f"Adaptive system: targeting {target_note_count} notes for {target_difficulty} "
-                   f"(density: {target_density:.2f} notes/sec, duration: {duration:.1f}s)")        # Use a simplified approach: beat tracking + subdivisions
+                   f"(density: {target_density:.2f} notes/sec, duration: {duration:.1f}s)")
+        
+        # Debug logging
+        debug_file = "c:/temp/beatmapper_debug.txt"
+        try:
+            with open(debug_file, "a") as f:
+                f.write(f"Starting beat tracking for {target_difficulty}, duration: {duration:.1f}s\n")
+        except:
+            pass
+        
+        # Use a simplified approach: beat tracking + subdivisions
         try:
             # Get beats using librosa with more basic parameters to avoid API issues
             try:
@@ -109,22 +118,26 @@ def generate_adaptive_notes_csv(song_path, midi_path, output_path, target_diffic
             for note_time in sorted(selected_notes):
                 if note_time - last_time >= min_spacing:
                     filtered_notes.append(note_time)
-                    last_time = note_time
-            
+                    last_time = note_time            
             selected_notes = filtered_notes
+              except Exception as e:
+            logger.error(f"Beat tracking failed: {e}")
             
-        except Exception as e:
-            logger.error(f"Beat tracking failed: {e}, using fallback pattern")
-            # Fallback: generate evenly spaced notes
-            start_time = 3.0
-            end_time = duration
-            interval = 1.0 / target_density  # Seconds between notes
+            # Debug logging - save error details
+            debug_file = "c:/temp/beatmapper_debug.txt"
+            try:
+                with open(debug_file, "a") as f:
+                    f.write(f"Beat tracking error: {e}\n")
+                    import traceback
+                    f.write(f"Traceback: {traceback.format_exc()}\n")
+                    f.write(f"Adaptive system failed - returning False to allow other generators to try\n")
+            except:
+                pass
             
-            selected_notes = []
-            current_time = start_time
-            while current_time < end_time:
-                selected_notes.append(round(current_time, 2))
-                current_time += interval
+            # For beat alignment, we don't want to fall back to generic patterns
+            # Instead, return False so other beat-aware generators can be tried
+            logger.info("Returning False to allow other beat-aligned generators to attempt")
+            return False
         
         logger.info(f"Final selection: {len(selected_notes)} notes")
         

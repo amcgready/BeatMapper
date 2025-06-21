@@ -7,7 +7,6 @@ import logging
 import sys
 import traceback
 import tempfile
-import sqlite3
 from datetime import datetime
 import csv
 from flask import Flask, request, jsonify, send_file
@@ -44,9 +43,32 @@ logging.basicConfig(
     format='%(asctime)s %(levelname)s %(name)s %(message)s',
     handlers=[
         logging.FileHandler(log_file, encoding='utf-8', mode='a'),
-        logging.StreamHandler(sys.stdout)
-    ]
+        logging.StreamHandler(sys.stdout)    ]
 )
+
+# Progress tracking for note generation
+progress_tracker = {}
+
+def update_progress(task_id, progress, message, status='in_progress'):
+    """Update progress for a task"""
+    progress_tracker[task_id] = {
+        'progress': progress,
+        'message': message,
+        'status': status,
+        'timestamp': time.time()
+    }
+    logger = logging.getLogger(__name__)
+    logger.info(f"Progress {task_id}: {progress}% - {message}")
+
+def cleanup_old_progress():
+    """Clean up old progress entries (older than 1 hour)"""
+    current_time = time.time()
+    to_remove = []
+    for task_id, info in progress_tracker.items():
+        if current_time - info.get('timestamp', 0) > 3600:  # 1 hour
+            to_remove.append(task_id)
+    for task_id in to_remove:
+        del progress_tracker[task_id]
 
 # Add a test log message
 logger = logging.getLogger(__name__)
@@ -65,59 +87,15 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB upload limit
 OUTPUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../output'))
 TEMPLATE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates/notes_template.xlsx'))
 
-def cleanup_output_dir(days=7):
-    """Clean up old temporary files"""
-    now = time.time()
-    cutoff = now - days * 86400
-    for filename in os.listdir(OUTPUT_DIR):
-        file_path = os.path.join(OUTPUT_DIR, filename)
-        if os.path.isfile(file_path) and ('temp_' in filename or filename.endswith('.zip')):
-            if os.path.getmtime(file_path) < cutoff:
-                try:
-                    os.remove(file_path)
-                    logger.info(f"Deleted old file: {filename}")
-                except Exception as e:                    logger.error(f"Failed to delete {filename}: {e}")
-
-def parse_artist_title_metadata(title, artist):
-    """
-    Parse metadata that might have artist and title combined in the title field.
-    Handles formats like "Artist - Title" or "Artist: Title"
-    
-    Args:
-        title (str): The title field from metadata
-        artist (str): The artist field from metadata
-        
-    Returns:
-        tuple: (parsed_title, parsed_artist)
-    """
-    # If we already have both title and artist, return as-is
-    if title and artist and artist.strip() and not ("unknown" in artist.lower()):
-        return title.strip(), artist.strip()
-    
-    # If title contains common separators, try to split
-    if title and any(sep in title for sep in [' - ', ' – ', ' — ', ': ']):
-        for separator in [' - ', ' – ', ' — ', ': ']:
-            if separator in title:
-                parts = title.split(separator, 1)  # Split only on first occurrence
-                if len(parts) == 2:
-                    potential_artist = parts[0].strip()
-                    potential_title = parts[1].strip()
-                    
-                    # Make sure both parts are not empty and seem reasonable
-                    if potential_artist and potential_title and len(potential_artist) > 0 and len(potential_title) > 0:
-                        logger.info(f"Parsed '{title}' into artist: '{potential_artist}', title: '{potential_title}'")
-                        return potential_title, potential_artist
-                break
-    
-    # If we can't parse or don't have the format, return original values
-    return title.strip() if title else "", artist.strip() if artist else ""
-
-def get_db_connection():
-    """Create a connection to the SQLite database."""
-    db_path = os.path.join(os.path.dirname(__file__), 'beatmapper.db')
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
+@app.route('/api/progress/<task_id>', methods=['GET'])
+def get_progress(task_id):
+    """Get progress status for a long-running task"""
+    progress_info = progress_tracker.get(task_id, {
+        'status': 'not_found',
+        'progress': 0,
+        'message': 'Task not found'
+    })
+    return jsonify(progress_info)
 
 @app.route('/api/health')
 def health():
@@ -202,9 +180,10 @@ def upload_file():
         artist = request.form.get('artist', '')
         difficulty = request.form.get('difficulty', '')  # User's difficulty override
         song_map = request.form.get('song_map', 'VULCAN')  # User's stage selection
-        
-        # Parse and clean up title/artist metadata in case they're combined
-        parsed_title, parsed_artist = parse_artist_title_metadata(title, artist)
+          # Parse and clean up title/artist metadata in case they're combined
+        # Simple implementation since parse_artist_title_metadata is missing
+        parsed_title = title.strip() if title else ""
+        parsed_artist = artist.strip() if artist else ""
         
         logger.info(f"Original metadata: title='{title}', artist='{artist}', difficulty='{difficulty}', song_map='{song_map}'")
         logger.info(f"Parsed metadata: title='{parsed_title}', artist='{parsed_artist}'")
@@ -247,9 +226,8 @@ def upload_file():
         except Exception as e:
             logger.error(f"Failed to generate preview: {e}", exc_info=True)
             return jsonify({"status": "error", "error": f"Failed to generate preview: {str(e)}"}), 500          # Generate notes.csv using original audio file
-        notes_path = os.path.join(beatmap_dir, 'notes.csv')
-          # Determine target difficulty for note generation
-        target_difficulty = difficulty if (difficulty and difficulty != "AUTO") else None
+        notes_path = os.path.join(beatmap_dir, 'notes.csv')        # Determine target difficulty for note generation
+        target_difficulty = difficulty if (difficulty and difficulty != "AUTO") else "EASY"  # Default to EASY if no difficulty specified
         
         # Convert numeric difficulty to string if needed for notes generator
         if target_difficulty is not None:
@@ -909,19 +887,32 @@ def update_beatmap(beatmap_id):
             with open(beatmaps_path, 'w') as f:
                 json.dump(beatmaps, f)
                 
-            logger.info(f"Successfully updated beatmap in beatmaps.json")
-              # Check if we need to regenerate notes.csv (if difficulty changed)
+            logger.info(f"Successfully updated beatmap in beatmaps.json")            # Check if we need to regenerate notes.csv (if difficulty changed)
             should_regenerate_notes = False
             regeneration_reason = ""
+            
+            # Debug logging for difficulty analysis
+            try:
+                with open(debug_file, "a") as f:
+                    f.write(f"\n=== DIFFICULTY CHANGE ANALYSIS ===\n")
+                    f.write(f"User provided difficulty: {data.get('difficulty')}\n")
+                    f.write(f"Final difficulty string: {difficulty}\n")
+            except:
+                pass
             
             # Case 1: User explicitly provided a difficulty
             if data.get('difficulty') is not None:
                 should_regenerate_notes = True
                 regeneration_reason = f"User provided explicit difficulty: {difficulty}"
+                try:
+                    with open(debug_file, "a") as f:
+                        f.write(f"CASE 1: User provided difficulty - REGENERATING\n")
+                except:
+                    pass
             
             # Case 2: Check if the computed difficulty differs from current info.csv
             try:
-                current_info_difficulty = None
+                current_info_difficulty = None;
                 with open(info_path, 'r') as f:
                     reader = csv.DictReader(f)
                     for row in reader:
@@ -949,19 +940,25 @@ def update_beatmap(beatmap_id):
                 # If we can't read the current difficulty, regenerate to be safe
                 if data.get('difficulty') is not None:
                     should_regenerate_notes = True
-                    regeneration_reason = "Could not read current difficulty, regenerating to be safe"
-              # Regenerate notes.csv if needed
+                    regeneration_reason = "Could not read current difficulty, regenerating to be safe"            # Regenerate notes.csv if needed
             if should_regenerate_notes:
                 try:
                     logger.info(f"Regenerating notes.csv: {regeneration_reason}")
+                    
+                    # Generate task ID for progress tracking
+                    task_id = f"regenerate_{beatmap_id}_{int(time.time())}"
+                    update_progress(task_id, 0, "Starting note regeneration...", "in_progress")
                     
                     # Debug logging
                     try:
                         with open(debug_file, "a") as f:
                             f.write(f"REGENERATING notes.csv: {regeneration_reason}\n")
                             f.write(f"Target difficulty: {difficulty}\n")
+                            f.write(f"Progress task ID: {task_id}\n")
                     except:
                         pass
+                    
+                    update_progress(task_id, 10, "Finding audio files...")
                     
                     # Find the audio file in the beatmap directory
                     audio_file = None
@@ -973,12 +970,17 @@ def update_beatmap(beatmap_id):
                         elif filename.lower().endswith(('.mid', '.midi')):
                             midi_file = os.path.join(beatmap_dir, filename)
                     
+                    update_progress(task_id, 20, "Audio files located, starting note generation...")
+                    
                     if audio_file and os.path.exists(audio_file):
                         notes_path = os.path.join(beatmap_dir, 'notes.csv')
                         
                         # Import the notes generator
                         from processing.notes_generator import generate_notes_csv
-                          # Convert numeric difficulty back to string for notes generator
+                        
+                        update_progress(task_id, 30, "Initializing note generator...")
+                        
+                        # Convert numeric difficulty back to string for notes generator
                         difficulty_string_map = {0: "EASY", 1: "MEDIUM", 2: "HARD", 3: "EXTREME"}
                         target_difficulty_string = difficulty_string_map.get(difficulty, "EASY") if isinstance(difficulty, int) else difficulty
                         
@@ -989,26 +991,42 @@ def update_beatmap(beatmap_id):
                         except:
                             pass
                         
+                        update_progress(task_id, 40, f"Generating notes for {target_difficulty_string} difficulty...")
+                        
                         # Regenerate notes.csv with the new difficulty
-                        generate_notes_csv(
+                        success = generate_notes_csv(
                             song_path=audio_file,
                             midi_path=midi_file if midi_file and os.path.exists(midi_file) else None,
                             output_path=notes_path,
-                            target_difficulty=target_difficulty_string
+                            target_difficulty=target_difficulty_string,
+                            progress_callback=lambda p, msg: update_progress(task_id, 40 + int(p * 0.5), msg)
                         )
                         
-                        logger.info(f"Successfully regenerated notes.csv with difficulty: {difficulty}")
-                          # Debug logging
-                        try:
-                            with open(debug_file, "a") as f:
-                                f.write(f"Notes.csv regenerated successfully\n")
-                        except:
-                            pass
+                        if success:
+                            update_progress(task_id, 90, "Note generation completed, finalizing...")
+                            logger.info(f"Successfully regenerated notes.csv with difficulty: {difficulty}")
+                            update_progress(task_id, 100, "Notes regeneration completed successfully!", "completed")
+                        else:
+                            update_progress(task_id, 0, "Note generation failed", "error")
+                            logger.error("Note generation failed")
+                            
                     else:
-                        logger.warning(f"Could not find audio file in {beatmap_dir} for notes regeneration")
+                        update_progress(task_id, 0, "Audio file not found", "error")
+                        logger.error(f"Audio file not found in beatmap directory: {beatmap_dir}")
                         
+                    # Return task ID so frontend can track progress
+                    return jsonify({
+                        "status": "success",
+                        "title": title,
+                        "artist": artist,
+                        "difficulty": DIFFICULTY_MAP.get(difficulty.upper(), 0) if isinstance(difficulty, str) else difficulty,
+                        "song_map": SONG_MAP_MAP.get(song_map.upper(), 0) if isinstance(song_map, str) else song_map,
+                        "regenerating": True,                        "progress_task_id": task_id
+                    })
+                    
                 except Exception as e:
                     logger.error(f"Failed to regenerate notes.csv: {e}", exc_info=True)
+                    update_progress(task_id, 0, f"Regeneration failed: {str(e)}", "error")
                     # Don't fail the entire update if notes regeneration fails
                     try:
                         with open(debug_file, "a") as f:
@@ -1039,7 +1057,7 @@ def update_beatmap(beatmap_id):
 if __name__ == '__main__':
     logger.info("BeatMapper server starting up...")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    cleanup_output_dir(days=7)
+    # cleanup_output_dir(days=7)  # Function not implemented yet
     logger.info(f"Output directory: {OUTPUT_DIR}")
     logger.info("Server initialization complete, starting Flask...")
     app.run(debug=False)

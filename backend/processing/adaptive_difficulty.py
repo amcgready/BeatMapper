@@ -291,3 +291,13 @@ class AdaptiveDifficultyEngine:
         ]
         
         return configs[min(band_idx, len(configs) - 1)]
+
+from backend.processing.adaptive_notes_simple import generate_adaptive_notes_csv
+
+# Regenerate with proper beat alignment
+generate_adaptive_notes_csv(
+    song_path="path/to/your/audio.mp3",
+    midi_path=None,
+    output_path="notes.csv", 
+    target_difficulty="EASY"  # or MEDIUM, HARD, EXTREME
+)

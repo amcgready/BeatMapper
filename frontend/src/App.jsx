@@ -17,10 +17,10 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
       return difficultyMap[beatmap.difficulty] || "AUTO";
     })() : "AUTO",
   });
-  
-  const [albumArt, setAlbumArt] = useState(null);
+    const [albumArt, setAlbumArt] = useState(null);
   const [albumArtPreview, setAlbumArtPreview] = useState(beatmap?.artwork || null);
   const [isSaving, setIsSaving] = useState(false);
+  const [progress, setProgress] = useState({ percent: 0, message: "", isRegenerating: false });
     // Reset form when beatmap changes
   useEffect(() => {    if (beatmap) {      setMetadata({
         title: beatmap.title || "",
@@ -53,13 +53,57 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
       };
       reader.readAsDataURL(file);
       setAlbumArt(file);
-    }
+    }  };
+  
+  const pollProgress = async (taskId) => {
+    let attempts = 0;
+    const maxAttempts = 60; // 60 seconds max
+      const poll = async () => {
+      try {
+        console.log(`Polling progress for task ${taskId}, attempt ${attempts + 1}`);
+        const response = await fetch(`/api/progress/${taskId}`);
+        const progressData = await response.json();
+        
+        console.log("Progress data received:", progressData);
+        
+        setProgress({
+          percent: progressData.progress || 0,
+          message: progressData.message || "Processing...",
+          isRegenerating: progressData.status === 'in_progress'
+        });
+        
+        console.log("Updated progress state:", {
+          percent: progressData.progress || 0,
+          message: progressData.message || "Processing...",
+          isRegenerating: progressData.status === 'in_progress'
+        });
+        
+        if (progressData.status === 'completed') {
+          setProgress({ percent: 100, message: "Completed!", isRegenerating: false });
+          return true; // Done
+        } else if (progressData.status === 'error') {
+          setProgress({ percent: 0, message: progressData.message || "Error occurred", isRegenerating: false });
+          return true; // Stop polling
+        } else if (attempts < maxAttempts) {
+          attempts++;
+          setTimeout(poll, 1000); // Poll every second
+        } else {
+          setProgress({ percent: 0, message: "Timeout", isRegenerating: false });
+        }
+      } catch (error) {
+        console.error("Error polling progress:", error);
+        setProgress({ percent: 0, message: "Error checking progress", isRegenerating: false });
+      }
+    };
+    
+    poll();
   };
   
   const handleSave = async () => {
     if (!beatmap) return;
     
     setIsSaving(true);
+    setProgress({ percent: 0, message: "Saving changes...", isRegenerating: false });
     
     try {
       // Use the correct endpoint with beatmap ID in the URL
@@ -80,28 +124,61 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
         const errorText = await response.text();
         console.error("Server error response:", errorText);
         throw new Error(`Server error: ${errorText}`);
-      }
+      }      const result = await response.json();
       
-      const result = await response.json();
-        if (result.status === "success") {
-        const updatedBeatmap = {
-          ...beatmap,
-          title: result.title,
-          artist: result.artist,
-          difficulty: result.difficulty, // Use numeric difficulty from backend response
-          song_map: result.song_map,
-          artwork: albumArtPreview || beatmap.artwork
-        };
-        
-        onSave(updatedBeatmap);
-        onClose();
+      // Debug logging
+      console.log("Update response:", result);
+      console.log("Has regenerating flag:", result.regenerating);
+      console.log("Has progress_task_id:", result.progress_task_id);
+      
+      if (result.status === "success") {
+        // Check if note regeneration is happening
+        if (result.regenerating && result.progress_task_id) {
+          console.log("Starting progress tracking for task:", result.progress_task_id);
+          setProgress({ percent: 5, message: "Starting note regeneration...", isRegenerating: true });
+          // Start polling for progress
+          pollProgress(result.progress_task_id);
+          
+          // Wait for regeneration to complete before updating UI
+          const checkCompletion = setInterval(() => {
+            if (!progress.isRegenerating) {
+              clearInterval(checkCompletion);
+              
+              const updatedBeatmap = {
+                ...beatmap,
+                title: result.title,
+                artist: result.artist,
+                difficulty: result.difficulty,
+                song_map: result.song_map,
+                artwork: albumArtPreview || beatmap.artwork
+              };
+              
+              onSave(updatedBeatmap);
+              setIsSaving(false);
+              onClose();
+            }
+          }, 500);        } else {
+          // No regeneration needed, update immediately
+          console.log("No regeneration needed, updating immediately");
+          const updatedBeatmap = {
+            ...beatmap,
+            title: result.title,
+            artist: result.artist,
+            difficulty: result.difficulty, // Use numeric difficulty from backend response
+            song_map: result.song_map,
+            artwork: albumArtPreview || beatmap.artwork
+          };
+          
+          onSave(updatedBeatmap);
+          setIsSaving(false);
+          onClose();
+        }
       } else {
         throw new Error(result.message || "Unknown error updating metadata");
-      }
-    } catch (error) {
+      }    } catch (error) {
       console.error("Error updating metadata:", error);
       alert(`Failed to update metadata: ${error.message}`);
-    } finally {
+      setProgress({ percent: 0, message: "", isRegenerating: false });
       setIsSaving(false);
     }
   };
@@ -391,7 +468,55 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
             <option value="DESERT">Desert</option>
             <option value="STORM">Storm</option>
           </select>
-        </div>
+        </div>        {/* Debug Info */}
+        {(isSaving || progress.isRegenerating) && (
+          <div style={{ 
+            marginTop: "16px", 
+            padding: "8px", 
+            backgroundColor: "#333", 
+            borderRadius: "4px",
+            fontSize: "12px",
+            color: "#ccc"
+          }}>
+            Debug: isSaving={isSaving.toString()}, isRegenerating={progress.isRegenerating.toString()}, percent={progress.percent}, message="{progress.message}"
+          </div>
+        )}
+          {/* Progress Bar */}
+        {(progress.isRegenerating || (isSaving && progress.percent > 0)) && (
+          <div style={{ marginTop: "20px" }}>
+            <div style={{ 
+              color: "#ccc", 
+              fontSize: "14px", 
+              marginBottom: "8px",
+              textAlign: "center"
+            }}>
+              {progress.message}
+            </div>
+            <div style={{
+              width: "100%",
+              height: "8px",
+              backgroundColor: "#333",
+              borderRadius: "4px",
+              overflow: "hidden"
+            }}>
+              <div style={{
+                width: `${progress.percent}%`,
+                height: "100%",
+                backgroundColor: "#2563eb",
+                borderRadius: "4px",
+                transition: "width 0.3s ease"
+              }} />
+            </div>
+            <div style={{ 
+              color: "#999", 
+              fontSize: "12px", 
+              marginTop: "4px",
+              textAlign: "center"
+            }}>
+              {progress.percent}% complete
+            </div>
+          </div>
+        )}
         
         <div style={{ 
           display: "flex", 
@@ -435,10 +560,9 @@ function MetadataEditModal({ isOpen, onClose, beatmap, onSave }) {  const [metad
                     border: "2px solid rgba(255,255,255,0.3)",
                     borderTop: "2px solid white",
                     borderRadius: "50%",
-                  }}
-                  className="spin-animation"
+                  }}                  className="spin-animation"
                 ></div>
-                Saving...
+                {progress.isRegenerating ? "Regenerating Notes..." : "Saving..."}
               </>
             ) : (
               <>

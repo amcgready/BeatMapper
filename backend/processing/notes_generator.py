@@ -93,7 +93,7 @@ def extract_midi_beats(midi_path):
         logger.error(f"Error processing MIDI file: {e}")
         return []
 
-def generate_notes_csv(song_path, midi_path, output_path, target_difficulty=None):
+def generate_notes_csv(song_path, midi_path, output_path, target_difficulty=None, progress_callback=None):
     """
     Generate notes based on audio analysis and beat detection.
     This is the standard generator that balances accuracy and performance.
@@ -101,14 +101,24 @@ def generate_notes_csv(song_path, midi_path, output_path, target_difficulty=None
     Args:
         song_path: Path to the audio file
         midi_path: Optional path to a MIDI file for enhanced beat detection
-        output_path: Path where the notes.csv will be saved        target_difficulty: Optional target difficulty level ("EASY", "MEDIUM", "HARD", "EXTREME")
+        output_path: Path where the notes.csv will be saved
+        target_difficulty: Optional target difficulty level ("EASY", "MEDIUM", "HARD", "EXTREME")
                           If provided, note density will be adjusted to match this difficulty
-        
-    Returns:
+        progress_callback: Optional callback function(progress_percent, message) for progress updates
+          Returns:
         bool: True if successful, False otherwise
     """
+    
+    def report_progress(percent, message):
+        """Helper to report progress"""
+        if progress_callback:
+            progress_callback(percent, message)
+    
     try:
-        logger.info(f"Generating standard drum notes for {os.path.basename(song_path)}")        # Debug logging for target difficulty
+        logger.info(f"Generating standard drum notes for {os.path.basename(song_path)}")
+        report_progress(0, "Initializing note generation...")
+        
+        # Debug logging for target difficulty
         debug_file = "c:/temp/beatmapper_debug.txt"
         try:
             os.makedirs(os.path.dirname(debug_file), exist_ok=True)
@@ -119,10 +129,15 @@ def generate_notes_csv(song_path, midi_path, output_path, target_difficulty=None
                 f.write(f"Type of target_difficulty: {type(target_difficulty)}\n")
         except:
             pass
-          # Use adaptive difficulty system if target difficulty is specified
+        
+        report_progress(5, "Checking for adaptive difficulty system...")
+        
+        # Use adaptive difficulty system if target difficulty is specified
         if target_difficulty:
             try:
                 from .adaptive_notes_simple import generate_adaptive_notes_csv
+                
+                report_progress(10, f"Using adaptive system for {target_difficulty} difficulty...")
                 
                 # Debug logging
                 try:
@@ -131,11 +146,11 @@ def generate_notes_csv(song_path, midi_path, output_path, target_difficulty=None
                 except:
                     pass
                 
-                # Use the adaptive system
-                success = generate_adaptive_notes_csv(song_path, midi_path, output_path, target_difficulty)
+                # Use the adaptive system                success = generate_adaptive_notes_csv(song_path, midi_path, output_path, target_difficulty)
                 
                 if success:
                     logger.info(f"Successfully generated notes using simplified adaptive system for {target_difficulty}")
+                    report_progress(100, f"Adaptive notes generation completed for {target_difficulty}")
                     # Debug logging
                     try:
                         with open(debug_file, "a") as f:
@@ -145,23 +160,35 @@ def generate_notes_csv(song_path, midi_path, output_path, target_difficulty=None
                     return True
                 else:
                     logger.warning("Simplified adaptive system failed, falling back to original system")
+                    report_progress(15, "Adaptive system failed, trying alternative methods...")
                     
             except ImportError as e:
                 logger.warning(f"Simplified adaptive system not available: {e}")
+                report_progress(15, "Adaptive system not available, using fallback...")
             except Exception as e:
                 logger.error(f"Error in simplified adaptive system: {e}")
+                report_progress(15, "Adaptive system error, using fallback...")
                 # Fall through to original system
+        
+        report_progress(20, "Checking for MIDI file...")
         
         # Check if MIDI file is provided for enhanced detection
         midi_beats = None
         if midi_path and os.path.exists(midi_path):
             logger.info(f"MIDI file provided: {os.path.basename(midi_path)}")
+            report_progress(25, "Processing MIDI file...")
             try:
                 midi_beats = extract_midi_beats(midi_path)
                 logger.info(f"Extracted {len(midi_beats)} MIDI beats")
+                report_progress(30, f"Extracted {len(midi_beats)} MIDI beats")
             except Exception as e:
                 logger.warning(f"Failed to process MIDI file: {e}")
                 logger.info("Continuing with audio-only analysis")
+                report_progress(30, "MIDI processing failed, using audio-only analysis")
+        else:
+            report_progress(30, "No MIDI file, using audio-only analysis")
+        
+        report_progress(35, "Loading audio file for analysis...")
         
         # Check if we can use librosa for analysis
         try:
@@ -173,6 +200,7 @@ def generate_notes_csv(song_path, midi_path, output_path, target_difficulty=None
                 
                 # Load the audio file
                 y, sr = librosa.load(song_path, sr=None)
+                report_progress(45, "Audio loaded, analyzing duration and tempo...")
                 
                 # Get song duration
                 song_duration = librosa.get_duration(y=y, sr=sr)
@@ -181,6 +209,7 @@ def generate_notes_csv(song_path, midi_path, output_path, target_difficulty=None
                 # Detect the tempo
                 tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
                 logger.info(f"Detected tempo: {{format_bpm(tempo)}}")
+                report_progress(55, f"Tempo detected: {{format_bpm(tempo)}}")
                 
                 # Try to extract drums using spleeter if available
                 drums_y = try_extract_drums_with_spleeter(song_path)
@@ -354,10 +383,11 @@ def generate_drum_synced_notes(y, sr, song_duration, tempo, beats, output_path, 
             try:
                 with open(debug_file, "a") as f:
                     f.write(f"Threshold: {original_threshold:.3f} -> {threshold:.3f} (multiplier: {threshold_multiplier})\n")
-            except:
-                pass
+            except:                pass
             
             logger.info(f"Adjusted threshold for {target_difficulty}: {threshold:.3f}")
+        
+        report_progress(85, "Processing audio onsets and generating notes...")
         
         # Prepare to write CSV
         with open(output_path, 'w', newline='') as f:
@@ -365,6 +395,8 @@ def generate_drum_synced_notes(y, sr, song_duration, tempo, beats, output_path, 
             
             # Header row
             writer.writerow(["Time [s]", "Enemy Type", "Aux Color 1", "Aux Color 2", "Nº Enemies", "interval", "Aux"])
+            
+            report_progress(90, "Writing note data to CSV...")
             
             # Start at 3.0s to match MIDI reference
             start_offset = 3.0
@@ -430,11 +462,11 @@ def generate_drum_synced_notes(y, sr, song_duration, tempo, beats, output_path, 
                 # Move to next measure
                 measure_start += measure_length
                 current_measure += 1
-            
-            # Log the total number of notes generated
+              # Log the total number of notes generated
             with open(output_path, 'r') as f:
                 note_count = sum(1 for _ in f) - 1  # Subtract 1 for header
                 logger.info(f"Generated {note_count} notes")
+                report_progress(100, f"Note generation completed! Generated {note_count} notes")
         
         return True
     
